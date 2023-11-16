@@ -1,0 +1,3462 @@
+	section	.text,"ax",@progbits
+	assume	adl = 1
+	section	.text,"ax",@progbits
+	public	_size_of_delta
+_size_of_delta:
+	call	__frameset0
+	ld	iy, (ix + 6)
+	ld	bc, 9
+	or	a, a
+	sbc	hl, hl
+	ld	e, (iy)
+	ld	a, e
+	or	a, a
+	jr	nz, BB0_2
+	push	bc
+	pop	hl
+	jr	BB0_4
+BB0_2:
+	ld	a, e
+	cp	a, 1
+	jr	nz, BB0_4
+	ld	de, (iy + 7)
+	or	a, a
+	sbc	hl, hl
+	ld	l, e
+	ld	h, d
+	add	hl, bc
+BB0_4:
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_clear_delta_collection
+_clear_delta_collection:
+	call	__frameset0
+	ld	iy, (ix + 6)
+	ld	de, 0
+	ld	bc, 4096
+	lea	hl, iy
+	add	hl, bc
+	ld	(hl), de
+	ld	bc, 4099
+	add	iy, bc
+	ld	(iy), de
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_push_delta
+_push_delta:
+	ld	hl, -6
+	call	__frameset
+	ld	de, (ix + 15)
+	ld	bc, 4097
+	push	de
+	pop	hl
+	or	a, a
+	sbc	hl, bc
+	jr	nc, BB2_4
+	ld	hl, (ix + 6)
+	ld	bc, 4096
+	add	hl, bc
+	ld	(ix - 6), hl
+	ld	hl, (hl)
+	ld	(ix - 3), hl
+BB2_2:
+	ld	hl, (ix - 3)
+	add	hl, de
+	ld	de, 4097
+	or	a, a
+	sbc	hl, de
+	jr	c, BB2_5
+	ld	hl, (ix + 6)
+	push	hl
+	call	_size_of_delta
+	push	hl
+	pop	de
+	pop	hl
+	ld	hl, (ix - 3)
+	or	a, a
+	sbc	hl, de
+	ld	(ix - 3), hl
+	ld	bc, (ix + 6)
+	push	bc
+	pop	iy
+	add	iy, de
+	push	hl
+	push	bc
+	push	iy
+	call	_copy
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	hl, (ix + 6)
+	ld	de, 4096
+	add	hl, de
+	ld	de, (ix - 3)
+	ld	(hl), de
+	ld	de, (ix + 15)
+	jr	BB2_2
+BB2_4:
+	ld	hl, 0
+	jr	BB2_6
+BB2_5:
+	ld	hl, (ix + 6)
+	push	hl
+	pop	iy
+	ld	de, (ix - 3)
+	add	iy, de
+	ld	(ix - 3), iy
+	ld	hl, (ix + 12)
+	push	hl
+	push	iy
+	ld	hl, (ix + 9)
+	push	hl
+	call	_copy
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	iy, (ix - 6)
+	ld	hl, (iy)
+	ld	de, (ix + 15)
+	add	hl, de
+	ld	(iy), hl
+	ld	de, 4099
+	ld	iy, (ix + 6)
+	add	iy, de
+	ld	hl, (iy)
+	inc	hl
+	ld	(iy), hl
+	ld	hl, (ix - 3)
+BB2_6:
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_copy
+_copy:
+	call	__frameset0
+	ld	de, (ix + 12)
+	ld	iy, 0
+	ld	bc, 1
+	push	de
+	pop	hl
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	p, BB3_2
+	lea	de, iy
+BB3_2:
+	ld	bc, (ix + 6)
+	ld	iy, (ix + 9)
+BB3_3:
+	push	de
+	pop	hl
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB3_5
+	push	bc
+	pop	hl
+	ld	a, (hl)
+	ld	(iy), a
+	inc	hl
+	push	hl
+	pop	bc
+	inc	iy
+	dec	de
+	jr	BB3_3
+BB3_5:
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_pop_delta
+_pop_delta:
+	ld	hl, -12
+	call	__frameset
+	ld	iy, (ix + 6)
+	ld	de, 4099
+	add	iy, de
+	ld	de, (iy)
+	push	de
+	pop	hl
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	jr	nz, BB4_2
+	ld	hl, 0
+	jr	BB4_8
+BB4_2:
+	ld	(ix - 9), iy
+	push	de
+	pop	bc
+	dec	bc
+	push	de
+	pop	hl
+	ld	(ix - 6), bc
+	or	a, a
+	sbc	hl, bc
+	jr	c, BB4_4
+	ld	de, (ix - 6)
+BB4_4:
+	ld	iy, (ix + 6)
+BB4_5:
+	push	de
+	pop	hl
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	ld	(ix - 3), iy
+	jr	z, BB4_7
+	push	iy
+	ld	(ix - 12), de
+	call	_size_of_delta
+	ld	iy, (ix - 3)
+	push	hl
+	pop	de
+	pop	hl
+	add	iy, de
+	ld	de, (ix - 12)
+	dec	de
+	jr	BB4_5
+BB4_7:
+	ld	hl, (ix - 9)
+	ld	de, (ix - 6)
+	ld	(hl), de
+	push	iy
+	call	_size_of_delta
+	push	hl
+	pop	de
+	pop	hl
+	ld	bc, 4096
+	ld	iy, (ix + 6)
+	add	iy, bc
+	ld	hl, (iy)
+	or	a, a
+	sbc	hl, de
+	ld	(iy), hl
+	ld	hl, (ix - 3)
+BB4_8:
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_push_insert_delta
+_push_insert_delta:
+	ld	hl, -9
+	call	__frameset
+	ld	de, (ix + 9)
+	ld	bc, (ix + 12)
+	ld	iy, (ix + 15)
+	ld	hl, 9
+	ld	(ix - 9), h
+	ld	(ix - 8), de
+	ld	(ix - 5), bc
+	push	iy
+	ex	(sp), hl
+	ld	(ix - 2), l
+	ld	(ix - 1), h
+	pop	hl
+	push	hl
+	push	hl
+	pea	ix - 9
+	ld	hl, (ix + 6)
+	push	hl
+	call	_push_delta
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_push_remove_delta
+_push_remove_delta:
+	ld	hl, -12
+	call	__frameset
+	ld	de, (ix + 18)
+	ld	bc, 9
+	or	a, a
+	sbc	hl, hl
+	ld	l, e
+	ld	h, d
+	ld	(ix - 12), hl
+	add	hl, bc
+	ld	(ix - 9), 1
+	ld	iy, (ix + 9)
+	ld	(ix - 8), iy
+	ld	bc, (ix + 12)
+	ld	(ix - 5), bc
+	ld	(ix - 2), e
+	ld	(ix - 1), d
+	push	hl
+	ld	hl, 9
+	push	hl
+	pea	ix - 9
+	ld	hl, (ix + 6)
+	push	hl
+	call	_push_delta
+	push	hl
+	pop	iy
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+	lea	hl, iy
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB6_2
+	ld	hl, (ix + 15)
+	ld	de, (ix - 12)
+	push	de
+	pea	iy + 9
+	push	hl
+	call	_copy
+	pop	hl
+	pop	hl
+	pop	hl
+BB6_2:
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_main
+_main:
+	ld	hl, -9
+	call	__frameset
+	call	_gfx_Begin
+	ld	hl, 1
+	push	hl
+	call	_gfx_SetDraw
+	pop	hl
+	ld	hl, (_editor_font)
+	ld	de, 0
+	push	de
+	push	hl
+	call	_fontlib_SetFont
+	pop	hl
+	pop	hl
+	ld	hl, 5
+	push	hl
+	ld	hl, _.str.1
+	push	hl
+	ld	hl, _.str
+	push	hl
+	call	_ti_OpenVar
+	ld	l, a
+	ld	(ix - 3), hl
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	hl, 53533
+	push	hl
+	ld	hl, _program
+	push	hl
+	call	_zero
+	pop	hl
+	pop	hl
+	scf
+	sbc	hl, hl
+	ld	(_program+32770), hl
+	ld	hl, 1
+	ld	(_program+45058), hl
+	ld	hl, (ix - 3)
+	ld	a, l
+	or	a, a
+	jr	z, BB7_3
+	ld	hl, (ix - 3)
+	push	hl
+	call	_ti_GetSize
+	ld	c, l
+	ld	b, h
+	pop	hl
+	ld.sis	de, -32767
+	ld	l, c
+	ld	h, b
+	or	a, a
+	sbc.sis	hl, de
+	jr	nc, BB7_3
+	or	a, a
+	sbc	hl, hl
+	ld	l, c
+	ld	h, b
+	ld	de, (ix - 3)
+	push	de
+	ld	de, 1
+	push	de
+	ld	(ix - 3), hl
+	push	hl
+	ld	hl, _program
+	push	hl
+	ld	(ix - 6), bc
+	call	_ti_Read
+	ld	bc, (ix - 6)
+	pop	de
+	pop	de
+	pop	de
+	pop	de
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	jp	nz, BB7_13
+BB7_3:
+	call	_clock
+	push	hl
+	pop	bc
+	ld	iy, 0
+	ld	l, 1
+BB7_4:
+	ld	a, l
+	and	a, 1
+	bit	0, a
+	jp	z, BB7_12
+	ld	(ix - 3), l
+	ld	(ix - 9), iy
+	ld	(ix - 6), bc
+	call	_clock
+	push	hl
+	pop	de
+	ld	hl, (ix - 6)
+	ld	(ix - 6), de
+	or	a, a
+	sbc	hl, de
+	push	hl
+	pop	iy
+	ld	de, (ix - 9)
+	add	iy, de
+	lea	hl, iy
+	ld	de, 1
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	p, BB7_7
+	call	_update_input
+	call	_update
+	call	_render
+	call	_gfx_SwapDraw
+	ld	iy, 2184
+	jr	BB7_9
+BB7_7:
+	lea	hl, iy
+	ld	bc, 1000
+	call	__imulu
+	push	hl
+	pop	de
+	ld	bc, 1638400
+	or	a, a
+	sbc	hl, bc
+	jr	c, BB7_9
+	ex	de, hl
+	ld	c, 15
+	call	__ishru
+	ld.sis	de, -50
+	add.sis	hl, de
+	push	hl
+	ld	(ix - 9), iy
+	call	_msleep
+	pop	hl
+	ld	iy, (ix - 9)
+BB7_9:
+	ld	hl, -720868
+	push	de
+	ld	e, (hl)
+	inc	hl
+	ld	d, (hl)
+	ld	l, e
+	ld	h, d
+	pop	de
+	ld	a, l
+	bit	6, a
+	ld	l, (ix - 3)
+	jr	z, BB7_11
+	ld	l, 0
+BB7_11:
+	ld	bc, (ix - 6)
+	jp	BB7_4
+BB7_12:
+	call	_gfx_End
+	or	a, a
+	sbc	hl, hl
+	ld	sp, ix
+	pop	ix
+	ret
+BB7_13:
+	ld	hl, _program+32768
+	ld	(hl), c
+	inc	hl
+	ld	(hl), b
+	ld	iy, 0
+BB7_14:
+	lea	hl, iy
+	ld	de, (ix - 3)
+	or	a, a
+	sbc	hl, de
+	jp	nc, BB7_3
+	lea	de, iy
+	ld	hl, _program
+	add	hl, de
+	ld	a, (hl)
+	cp	a, 63
+	jr	nz, BB7_18
+	ld	de, (_program+45058)
+	push	de
+	pop	hl
+	ld	bc, 4095
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB7_18
+	push	de
+	pop	hl
+	inc	hl
+	ld	(_program+45058), hl
+	ex	de, hl
+	ld	bc, 3
+	call	__imulu
+	push	hl
+	pop	de
+	ld	hl, _program+32770
+	add	hl, de
+	ld	(hl), iy
+BB7_18:
+	push	iy
+	ld	(ix - 6), iy
+	call	_get_token_size
+	ld	iy, (ix - 6)
+	pop	hl
+	ld	de, 0
+	ld	e, a
+	add	iy, de
+	jr	BB7_14
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_zero
+_zero:
+	call	__frameset0
+	ld	de, (ix + 9)
+	ld	iy, 0
+	ld	bc, 1
+	push	de
+	pop	hl
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	p, BB8_2
+	lea	de, iy
+BB8_2:
+	ld	iy, (ix + 6)
+BB8_3:
+	push	de
+	pop	hl
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB8_5
+	ld	(iy), 0
+	inc	iy
+	dec	de
+	jr	BB8_3
+BB8_5:
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_get_token_size
+_get_token_size:
+	call	__frameset0
+	ld	bc, (ix + 6)
+	ld	iy, _program
+	ld	d, 2
+	add	iy, bc
+	ld	l, (iy)
+	ld	a, l
+	cp	a, -86
+	jr	z, BB9_13
+	ld	a, l
+	cp	a, -69
+	jr	z, BB9_13
+	ld	a, l
+	cp	a, -17
+	jr	z, BB9_13
+	ld	a, l
+	add	a, -92
+	cp	a, 3
+	jr	c, BB9_13
+	ld	a, l
+	add	a, -96
+	cp	a, 4
+	jr	c, BB9_13
+	ld	a, l
+	cp	a, 123
+	jr	z, BB9_13
+	ld	e, 1
+	push	bc
+	pop	hl
+	ld	bc, 1
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	m, BB9_14
+	ld	l, (iy - 1)
+	ld	a, l
+	cp	a, -86
+	jr	z, BB9_13
+	ld	a, l
+	cp	a, -69
+	jr	z, BB9_13
+	ld	a, l
+	cp	a, -17
+	jr	z, BB9_13
+	ld	a, l
+	add	a, -92
+	cp	a, 3
+	jr	c, BB9_13
+	ld	a, l
+	add	a, -96
+	cp	a, 4
+	jr	c, BB9_13
+	ld	a, l
+	cp	a, 123
+	jr	nz, BB9_14
+BB9_13:
+	ld	e, d
+BB9_14:
+	ld	a, e
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_update_input
+_update_input:
+	ld	hl, -12
+	call	__frameset
+	ld	hl, _key_timers+8
+	ld	(ix - 3), hl
+	call	_kb_Scan
+	ld	bc, 8
+	ld	de, 1
+BB10_1:
+	push	de
+	pop	hl
+	or	a, a
+	sbc	hl, bc
+	jp	z, BB10_13
+	ld	hl, _update_input.last_pressed
+	add	hl, de
+	ld	(ix - 6), hl
+	ld	a, (hl)
+	ld	iyl, a
+	push	de
+	pop	hl
+	ld	c, 1
+	call	__ishl
+	push	hl
+	pop	bc
+	ld	hl, -720880
+	add	hl, bc
+	ld	(ix - 12), hl
+	ld	c, (hl)
+	inc	hl
+	ld	b, (hl)
+	ld	a, c
+	cpl
+	ld	h, a
+	ex	de, hl
+	ld	e, iyl
+	ex	de, hl
+	ld	a, l
+	and	a, h
+	ld	iy, _key_up
+	add	iy, de
+	ld	(iy), a
+	ld	a, l
+	cpl
+	ld	l, a
+	ld	a, c
+	and	a, l
+	ld	hl, _key_down
+	add	hl, de
+	ld	(hl), a
+	ld	iy, (ix - 12)
+	ld	l, (iy)
+	ld	h, (iy + 1)
+	ld	(ix - 9), hl
+	ld	a, l
+	ld	hl, _key_held
+	add	hl, de
+	ld	(hl), a
+	ld	l, (iy)
+	ld	h, (iy + 1)
+	ld	a, l
+	ld	hl, (ix - 6)
+	ld	(hl), a
+	ld	hl, _key_debounced
+	ld	(ix - 6), de
+	add	hl, de
+	ld	a, (hl)
+	ld	bc, 0
+BB10_3:
+	push	bc
+	pop	hl
+	ld	de, 8
+	or	a, a
+	sbc	hl, de
+	jr	z, BB10_12
+	ld	(ix - 12), a
+	ld	hl, 1
+	call	__ishl
+	ld	a, l
+	ld	de, (ix - 9)
+	and	a, e
+	or	a, a
+	ld	a, 0
+	jr	z, BB10_7
+	ld	iy, (ix - 3)
+	add	iy, bc
+	ld	a, (iy)
+	cp	a, -1
+	jr	z, BB10_9
+	inc	a
+BB10_7:
+	ld	iy, (ix - 3)
+	add	iy, bc
+	ld	(iy), a
+	cp	a, 1
+	jr	z, BB10_9
+	cp	a, 4
+	jr	c, BB10_11
+BB10_9:
+	ld	a, (ix - 12)
+	or	a, l
+BB10_10:
+	inc	bc
+	jr	BB10_3
+BB10_11:
+	ld	a, l
+	cpl
+	ld	l, a
+	ld	a, (ix - 12)
+	and	a, l
+	jr	BB10_10
+BB10_12:
+	ld	hl, _key_debounced
+	ld	de, (ix - 6)
+	add	hl, de
+	ld	(hl), a
+	inc	de
+	ld	iy, (ix - 3)
+	lea	iy, iy + 8
+	ld	(ix - 3), iy
+	ld	bc, 8
+	jp	BB10_1
+BB10_13:
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_update
+_update:
+	ld	hl, -18
+	call	__frameset
+	call	_calculate_cursor_y
+	ld	(ix - 9), hl
+	ld	a, (_key_down+4)
+	bit	2, a
+	jr	z, BB11_2
+	ld	hl, (_program+45061)
+	ld	de, -50
+	push	de
+	push	hl
+	call	_insert_token_u8
+	pop	hl
+	pop	hl
+	ld	hl, (_program+45061)
+	inc	hl
+	ld	(_program+45061), hl
+	ld	a, (_key_down+4)
+BB11_2:
+	bit	3, a
+	jr	z, BB11_4
+	ld	hl, (_program+45061)
+	ld	de, 65
+	push	de
+	push	hl
+	call	_insert_token_u8
+	pop	hl
+	pop	hl
+	ld	hl, (_program+45061)
+	inc	hl
+	ld	(_program+45061), hl
+	ld	a, (_key_down+4)
+BB11_4:
+	bit	1, a
+	jr	z, BB11_6
+	ld	hl, (_program+45061)
+	ld	de, 5986
+	push	de
+	push	hl
+	call	_insert_token_u16
+	pop	hl
+	pop	hl
+	ld	hl, (_program+45061)
+	ld	de, 2
+	add	hl, de
+	ld	(_program+45061), hl
+BB11_6:
+	ld	hl, _program+45329
+	ld	de, _program+49431
+	ld	a, (_key_down+1)
+	and	a, 1
+	bit	0, a
+	jr	z, BB11_9
+	push	hl
+	call	_pop_delta
+	pop	de
+	ld	de, _program+49431
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB11_9
+	push	de
+	push	hl
+	call	_apply_delta_to_program
+	pop	hl
+	pop	hl
+	call	_calculate_cursor_y
+	ld	de, _program+49431
+	ld	(ix - 9), hl
+BB11_9:
+	ld	a, (_key_down+1)
+	bit	1, a
+	jr	z, BB11_12
+	push	de
+	call	_pop_delta
+	pop	de
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB11_12
+	ld	de, _program+45329
+	push	de
+	push	hl
+	call	_apply_delta_to_program
+	pop	hl
+	pop	hl
+	call	_calculate_cursor_y
+	ld	(ix - 9), hl
+BB11_12:
+	ld	a, (_key_down+1)
+	ld	l, a
+	bit	4, l
+	jr	z, BB11_14
+	ld	a, (_program+45064)
+	xor	a, 1
+	ld	(_program+45064), a
+	ld	de, (_program+45061)
+	ld	(_program+45065), de
+BB11_14:
+	bit	3, l
+	jr	z, BB11_20
+	ld	a, (_program+45064)
+	bit	0, a
+	jr	nz, BB11_17
+	ld	bc, (_program+45061)
+	ld	hl, _program+45327
+	ld	de, (hl)
+	push	de
+	ld	hl, _program+45071
+	push	hl
+	push	bc
+	call	_insert_tokens
+	jr	BB11_19
+BB11_17:
+	pea	ix - 6
+	call	_get_selecting_range
+	pop	hl
+	ld	hl, (ix - 3)
+	inc	hl
+	ld	de, (ix - 6)
+	push	de
+	pop	iy
+	or	a, a
+	sbc	hl, de
+	push	hl
+	pop	de
+	ld	bc, 257
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	p, BB11_20
+	xor	a, a
+	ld	(_program+45064), a
+	ld	hl, _program+45327
+	ld	(hl), e
+	inc	hl
+	ld	(hl), d
+	ld	hl, _program
+	lea	bc, iy
+	add	hl, bc
+	push	de
+	ld	de, _program+45071
+	push	de
+	push	hl
+	call	_copy
+BB11_19:
+	pop	hl
+	pop	hl
+	pop	hl
+BB11_20:
+	ld	a, (_key_down+1)
+	bit	2, a
+	jp	z, BB11_27
+	ld	a, (_program+45064)
+	bit	0, a
+	jr	nz, BB11_23
+	ld	hl, (_program+45061)
+	ld	de, _program+45327
+	push	de
+	pop	iy
+	ld	de, (iy)
+	push	de
+	ld	de, _program+45071
+	push	de
+	push	hl
+	call	_insert_tokens
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	hl, _program+45327
+	ld	hl, (hl)
+	ld	de, 0
+	ld	e, l
+	ld	d, h
+	ld	hl, (_program+45061)
+	add	hl, de
+	jr	BB11_25
+BB11_23:
+	pea	ix - 6
+	call	_get_selecting_range
+	pop	hl
+	ld	hl, (ix - 3)
+	inc	hl
+	ld	de, (ix - 6)
+	push	de
+	pop	iy
+	or	a, a
+	sbc	hl, de
+	push	hl
+	pop	bc
+	ld	de, 257
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	p, BB11_26
+	xor	a, a
+	ld	(_program+45064), a
+	ld	hl, _program+45327
+	ld	(hl), c
+	inc	hl
+	ld	(hl), b
+	ld	hl, _program
+	lea	de, iy
+	ld	(ix - 9), de
+	add	hl, de
+	push	bc
+	ld	de, _program+45071
+	push	de
+	push	hl
+	ld	(ix - 12), bc
+	call	_copy
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	hl, (ix - 12)
+	push	hl
+	ld	hl, (ix - 9)
+	push	hl
+	call	_remove_tokens
+	pop	hl
+	pop	hl
+	ld	hl, (ix - 9)
+BB11_25:
+	ld	(_program+45061), hl
+BB11_26:
+	call	_calculate_cursor_y
+	ld	(ix - 9), hl
+BB11_27:
+	ld	a, (_key_debounced+1)
+	cp	a, 0
+	call	pe, __setflag
+	jp	p, BB11_33
+	ld	a, (_program+45064)
+	bit	0, a
+	jr	nz, BB11_30
+	ld	hl, (_program+45061)
+	ld	(ix - 9), hl
+	push	hl
+	call	_get_token_size
+	pop	hl
+	or	a, a
+	sbc	hl, hl
+	ld	l, a
+	push	hl
+	ld	hl, (ix - 9)
+	push	hl
+	call	_remove_tokens
+	pop	hl
+	pop	hl
+	jr	BB11_32
+BB11_30:
+	pea	ix - 6
+	call	_get_selecting_range
+	pop	hl
+	ld	hl, (ix - 3)
+	inc	hl
+	ld	de, (ix - 6)
+	push	de
+	pop	iy
+	or	a, a
+	sbc	hl, de
+	push	hl
+	pop	de
+	ld	bc, 65537
+	or	a, a
+	sbc	hl, bc
+	jr	nc, BB11_32
+	push	de
+	ld	(ix - 9), iy
+	push	iy
+	call	_remove_tokens
+	pop	hl
+	pop	hl
+	ld	hl, (ix - 9)
+	ld	(_program+45061), hl
+	xor	a, a
+	ld	(_program+45064), a
+BB11_32:
+	call	_calculate_cursor_y
+	ld	(ix - 9), hl
+BB11_33:
+	ld	a, (_key_down+4)
+	cp	a, 0
+	call	pe, __setflag
+	ld	iy, _program+32770
+	jp	p, BB11_42
+	ld	bc, 3
+	ld	hl, (ix - 9)
+	call	__imulu
+	push	hl
+	pop	de
+	lea	hl, iy
+	add	hl, de
+	ld	bc, (hl)
+	inc	bc
+	ld	hl, _program+32768
+	ld	hl, (hl)
+	ld	de, 0
+	ld	e, l
+	ld	d, h
+	push	bc
+	pop	hl
+BB11_35:
+	push	hl
+	pop	iy
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	p, BB11_39
+	ld	(ix - 15), de
+	lea	de, iy
+	ld	hl, _program
+	add	hl, de
+	ld	a, (hl)
+	cp	a, 63
+	jr	z, BB11_38
+	ld	(ix - 18), iy
+	push	iy
+	ld	(ix - 12), bc
+	call	_get_token_size
+	ld	bc, (ix - 12)
+	pop	hl
+	ld	hl, (ix - 18)
+	ld	de, 0
+	ld	e, a
+	add	hl, de
+	ld	de, (ix - 15)
+	jr	BB11_35
+BB11_38:
+	lea	de, iy
+BB11_39:
+	push	de
+	pop	iy
+	dec	de
+	push	bc
+	pop	hl
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	p, BB11_42
+	lea	hl, iy
+	or	a, a
+	sbc	hl, bc
+	push	hl
+	pop	iy
+	ld	de, 65535
+	or	a, a
+	sbc	hl, de
+	jr	nc, BB11_42
+	push	iy
+	push	bc
+	ld	(ix - 12), bc
+	call	_remove_tokens
+	pop	hl
+	pop	hl
+	ld	hl, (ix - 12)
+	ld	(_program+45061), hl
+	call	_calculate_cursor_y
+	ld	(ix - 9), hl
+BB11_42:
+	ld	a, (_key_debounced+6)
+	and	a, 1
+	bit	0, a
+	jr	z, BB11_44
+	ld	hl, (_program+45061)
+	ld	de, 63
+	push	de
+	push	hl
+	call	_insert_token_u8
+	pop	hl
+	pop	hl
+	ld	hl, (_program+45061)
+	inc	hl
+	ld	(_program+45061), hl
+BB11_44:
+	ld	a, (_key_debounced+7)
+	ld	iyl, a
+	and	a, 1
+	bit	0, a
+	jr	z, BB11_47
+	ld	de, (_program+45058)
+	dec	de
+	ld	hl, (ix - 9)
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	p, BB11_47
+	ld	hl, (ix - 9)
+	inc	hl
+	ld	bc, 3
+	call	__imulu
+	push	hl
+	pop	de
+	ld	hl, _program+32770
+	add	hl, de
+	ld	hl, (hl)
+	inc	hl
+	ld	(_program+45061), hl
+BB11_47:
+	ld	a, iyl
+	bit	3, a
+	ld	de, 1
+	jr	z, BB11_50
+	ld	hl, (ix - 9)
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	m, BB11_50
+	ld	hl, (ix - 9)
+	dec	hl
+	ld	bc, 3
+	call	__imulu
+	push	hl
+	pop	bc
+	ld	de, _program+32770
+	ex	de, hl
+	add	hl, bc
+	ld	de, (hl)
+	inc	de
+	ld	(_program+45061), de
+	jr	BB11_51
+BB11_50:
+	ld	de, (_program+45061)
+BB11_51:
+	ld	a, iyl
+	bit	1, a
+	jr	z, BB11_54
+	push	de
+	pop	hl
+	ld	bc, 1
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	m, BB11_54
+	push	de
+	pop	hl
+	dec	hl
+	push	hl
+	push	af
+	ld	a, iyl
+	ld	(ix - 12), a
+	pop	af
+	ld	(ix - 9), de
+	call	_get_token_size
+	push	af
+	ld	a, (ix - 12)
+	ld	iyl, a
+	pop	af
+	pop	hl
+	ld	de, 0
+	ld	e, a
+	ld	hl, (ix - 9)
+	or	a, a
+	sbc	hl, de
+	push	hl
+	pop	de
+	ld	(_program+45061), de
+BB11_54:
+	ld	a, iyl
+	bit	2, a
+	jr	z, BB11_58
+	push	de
+	ld	(ix - 9), de
+	call	_get_token_size
+	ld	iy, (ix - 9)
+	pop	hl
+	ld	de, 0
+	ld	e, a
+	add	iy, de
+	ld	hl, _program+32768
+	ld	hl, (hl)
+	ld	e, l
+	ld	d, h
+	lea	hl, iy
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	m, BB11_57
+	push	de
+	pop	iy
+BB11_57:
+	ld	(_program+45061), iy
+BB11_58:
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_render
+_render:
+	ld	hl, -44
+	call	__frameset
+	xor	a, a
+	ld	(_render.ascii_storage+1), a
+	ld	iy, (_program+45058)
+	ld	hl, (_program+45061)
+	ld	(ix - 12), hl
+	ld	de, 1
+	lea	hl, iy
+	sbc	hl, de
+	call	pe, __setflag
+	ld	(ix - 9), iy
+	ld	bc, 0
+	jp	p, BB12_2
+	push	bc
+	pop	iy
+BB12_2:
+	ld	de, _program+32770
+BB12_3:
+	lea	hl, iy
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB12_6
+	ld	(ix - 15), iy
+	push	de
+	pop	iy
+	ld	hl, (iy)
+	ld	de, (ix - 12)
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	p, BB12_7
+	inc	bc
+	lea	iy, iy + 3
+	lea	de, iy
+	ld	iy, (ix - 15)
+	jr	BB12_3
+BB12_6:
+	ld	bc, (ix - 9)
+BB12_7:
+	ld	(ix - 9), bc
+	dec	bc
+	ld	(ix - 15), bc
+	ld	hl, 8
+	push	hl
+	call	_gfx_FillScreen
+	pop	hl
+	ld	hl, -9
+	push	hl
+	call	_fontlib_SetForegroundColor
+	pop	hl
+	ld	hl, 8
+	push	hl
+	call	_fontlib_SetBackgroundColor
+	pop	hl
+	or	a, a
+	sbc	hl, hl
+	push	hl
+	call	_fontlib_SetFirstPrintableCodePoint
+	pop	hl
+	ld	hl, -9
+	push	hl
+	call	_gfx_SetColor
+	pop	hl
+	ld	bc, (_program+45068)
+	push	bc
+	pop	hl
+	ld	de, (ix - 9)
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	ld	(ix - 18), bc
+	jp	m, BB12_9
+	ld	bc, (ix - 15)
+BB12_9:
+	push	bc
+	pop	iy
+	ld	de, 21
+	add	iy, de
+	ld	hl, (ix - 9)
+	ld	de, -22
+	add	hl, de
+	ld	(ix - 12), hl
+	lea	hl, iy
+	ld	de, (ix - 15)
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	m, BB12_11
+	ld	(ix - 12), bc
+BB12_11:
+	lea	hl, iy
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	m, BB12_13
+	ld	hl, (ix - 18)
+	ld	de, (ix - 9)
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	m, BB12_14
+BB12_13:
+	ld	hl, (ix - 12)
+	ld	(_program+45068), hl
+BB12_14:
+	ld	iy, _program+32770
+	ld	bc, 3
+	ld	hl, (ix - 12)
+	call	__imulu
+	push	hl
+	pop	de
+	lea	hl, iy
+	add	hl, de
+	ld	hl, (hl)
+	ld	(ix - 12), hl
+	ld	hl, 8
+	push	hl
+	ld	hl, 2
+	push	hl
+	ld	hl, 5
+	push	hl
+	or	a, a
+	sbc	hl, hl
+	push	hl
+	call	_gfx_FillRectangle
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	hl, (_program+45068)
+	ld	(ix - 21), hl
+	ld	a, (_program+45064)
+	bit	0, a
+	jr	z, BB12_16
+	pea	ix - 6
+	call	_get_selecting_range
+	pop	hl
+	ld	hl, (ix - 6)
+	ld	(ix - 35), hl
+	ld	hl, (ix - 3)
+	ld	(ix - 41), hl
+BB12_16:
+	ld	iy, (ix - 12)
+	inc	iy
+	ld	a, 5
+	ld	l, a
+	ld	(ix - 18), hl
+	ld	hl, 5
+	ld	(ix - 15), hl
+	ld	bc, 0
+BB12_17:
+	ld	hl, _program+32768
+	ld	hl, (hl)
+	push	bc
+	pop	de
+	ld	e, l
+	ld	d, h
+	lea	hl, iy
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	p, BB12_209
+	ld	de, (_program+45061)
+	ld	a, (_program+45064)
+	bit	0, a
+	ld	(ix - 28), de
+	lea	hl, iy
+	jr	nz, BB12_20
+	or	a, a
+	sbc	hl, de
+	ld	hl, 122
+	ld	a, 1
+	jr	nz, BB12_22
+	jr	BB12_23
+BB12_20:
+	ld	de, (ix - 35)
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	m, BB12_22
+	ld	hl, (ix - 41)
+	lea	de, iy
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	ld	hl, 122
+	ld	a, 1
+	jp	p, BB12_23
+BB12_22:
+	ld	hl, 8
+	xor	a, a
+BB12_23:
+	ld	(ix - 31), a
+	push	hl
+	ld	(ix - 12), iy
+	call	_fontlib_SetBackgroundColor
+	pop	hl
+	ld	de, (ix - 12)
+	ld	hl, _program
+	add	hl, de
+	ld	h, (hl)
+	ld	a, h
+	add	a, -48
+	ld	e, a
+	ld	a, h
+	add	a, -65
+	ld	l, a
+	ld	a, e
+	cp	a, 10
+	ld	(ix - 9), h
+	jr	c, BB12_27
+	ld	a, l
+	cp	a, 27
+	jr	c, BB12_27
+	ld	a, h
+	add	a, -97
+	ld	l, a
+	ld	a, h
+	cp	a, 4
+	jr	z, BB12_27
+	ld	a, l
+	cp	a, 26
+	ld	e, 0
+	jr	nc, BB12_28
+BB12_27:
+	ld	a, h
+	ld	(_render.ascii_storage), a
+	ld	e, 1
+	ld	hl, _render.ascii_storage
+	ld	(ix - 25), hl
+	ld	h, (ix - 9)
+BB12_28:
+	ld	a, h
+	cp	a, 43
+	ld	l, -1
+	jr	z, BB12_30
+	ld	l, 0
+BB12_30:
+	bit	0, l
+	ld	bc, _.str.2
+	jr	nz, BB12_32
+	ld	bc, (ix - 25)
+BB12_32:
+	ld	a, h
+	cp	a, 58
+	ld	iy, _.str.3
+	jr	z, BB12_34
+	push	bc
+	pop	iy
+BB12_34:
+	ld	a, h
+	and	a, -2
+	cp	a, 58
+	ld	c, -1
+	jr	z, BB12_36
+	ld	c, 0
+BB12_36:
+	ld	a, l
+	or	a, c
+	bit	0, a
+	ld	l, 1
+	jr	nz, BB12_38
+	ld	l, e
+BB12_38:
+	ld	a, h
+	cp	a, 59
+	ld	de, _.str.4
+	jr	z, BB12_40
+	lea	de, iy
+BB12_40:
+	ld	a, h
+	cp	a, 60
+	ld	iyl, -1
+	ld	a, iyl
+	jr	z, BB12_42
+	ld	a, 0
+BB12_42:
+	bit	0, a
+	ld	c, 4
+	jr	nz, BB12_44
+	ld	c, l
+BB12_44:
+	bit	0, a
+	ld	hl, _.str.5
+	jr	nz, BB12_46
+	ex	de, hl
+BB12_46:
+	ld	a, (ix - 9)
+	cp	a, 61
+	ld	a, iyl
+	jr	z, BB12_48
+	ld	a, 0
+BB12_48:
+	bit	0, a
+	ld	d, 5
+	jr	nz, BB12_50
+	ld	d, c
+BB12_50:
+	bit	0, a
+	ld	bc, _.str.6
+	jr	nz, BB12_52
+	push	hl
+	pop	bc
+BB12_52:
+	ld	h, (ix - 9)
+	ld	a, h
+	cp	a, 62
+	ex	de, hl
+	ld	e, iyl
+	ex	de, hl
+	jr	z, BB12_54
+	ld	l, 0
+BB12_54:
+	bit	0, l
+	ld	iy, _.str.7
+	jr	nz, BB12_56
+	push	bc
+	pop	iy
+BB12_56:
+	ld	a, h
+	cp	a, 106
+	ld	e, -1
+	jr	z, BB12_58
+	ld	e, 0
+BB12_58:
+	ld	a, e
+	or	a, l
+	ld	l, a
+	bit	0, e
+	ld	bc, _.str.8
+	jr	nz, BB12_60
+	lea	bc, iy
+BB12_60:
+	ld	a, h
+	cp	a, 113
+	ld	iyl, -1
+	ld	e, iyl
+	jr	z, BB12_62
+	ld	e, 0
+BB12_62:
+	ld	a, e
+	or	a, l
+	bit	0, a
+	ld	l, 1
+	jr	nz, BB12_64
+	ld	l, d
+BB12_64:
+	bit	0, e
+	ld	de, _.str.9
+	jr	nz, BB12_66
+	push	bc
+	pop	de
+BB12_66:
+	ld	a, h
+	cp	a, -75
+	ld	a, iyl
+	jr	z, BB12_68
+	ld	a, 0
+BB12_68:
+	bit	0, a
+	ld	c, 4
+	jr	nz, BB12_70
+	ld	c, l
+BB12_70:
+	bit	0, a
+	ld	hl, _.str.10
+	jr	nz, BB12_72
+	ex	de, hl
+BB12_72:
+	ld	a, (ix - 9)
+	cp	a, -50
+	ld	a, iyl
+	jr	z, BB12_74
+	ld	a, 0
+BB12_74:
+	bit	0, a
+	ld	e, 3
+	jr	nz, BB12_76
+	ld	e, c
+BB12_76:
+	bit	0, a
+	ld	bc, _.str.11
+	jr	nz, BB12_78
+	push	hl
+	pop	bc
+BB12_78:
+	ld	a, (ix - 9)
+	cp	a, -42
+	ld	a, iyl
+	jr	z, BB12_80
+	ld	a, 0
+BB12_80:
+	bit	0, a
+	ld	h, 4
+	jr	nz, BB12_82
+	ld	h, e
+BB12_82:
+	bit	0, a
+	ld	de, _.str.12
+	jr	nz, BB12_84
+	push	bc
+	pop	de
+BB12_84:
+	ld	a, (ix - 9)
+	cp	a, -41
+	ex	de, hl
+	ld	e, iyl
+	ex	de, hl
+	jr	z, BB12_86
+	ld	l, 0
+BB12_86:
+	bit	0, l
+	ld	bc, _.str.13
+	jr	nz, BB12_88
+	push	de
+	pop	bc
+BB12_88:
+	ld	a, (ix - 9)
+	cp	a, -34
+	ld	e, iyl
+	jr	z, BB12_90
+	ld	e, 0
+BB12_90:
+	ld	a, e
+	or	a, l
+	ld	l, a
+	bit	0, e
+	ld	iy, _.str.14
+	jr	nz, BB12_92
+	push	bc
+	pop	iy
+BB12_92:
+	ld	a, (ix - 9)
+	cp	a, -26
+	ld	e, -1
+	jr	z, BB12_94
+	ld	e, 0
+BB12_94:
+	ld	a, e
+	or	a, l
+	bit	0, a
+	ld	d, 5
+	jr	nz, BB12_96
+	ld	d, h
+BB12_96:
+	ld	(ix - 22), d
+	bit	0, e
+	ld	hl, _.str.15
+	jr	nz, BB12_98
+	lea	hl, iy
+BB12_98:
+	ld	a, (ix - 9)
+	cp	a, 42
+	ld	d, -1
+	ld	e, d
+	jr	z, BB12_100
+	ld	e, 0
+BB12_100:
+	bit	0, e
+	ld	bc, _.str.16
+	ld	iy, (ix - 12)
+	jr	nz, BB12_102
+	push	hl
+	pop	bc
+BB12_102:
+	ld	a, (ix - 9)
+	cp	a, -84
+	ld	l, d
+	jr	z, BB12_104
+	ld	l, 0
+BB12_104:
+	ld	a, l
+	or	a, e
+	bit	0, a
+	ld	h, 1
+	jr	nz, BB12_106
+	ld	h, (ix - 22)
+BB12_106:
+	bit	0, l
+	ld	de, _.str.17
+	jr	nz, BB12_108
+	push	bc
+	pop	de
+BB12_108:
+	ld	a, (ix - 9)
+	cp	a, -69
+	jr	nz, BB12_114
+	ld	(ix - 25), de
+	lea	de, iy
+	ld	iy, _program
+	add	iy, de
+	ld	l, (iy + 1)
+	ld	iy, (ix - 12)
+	ld	a, l
+	add	a, 80
+	ld	c, a
+	ld	a, l
+	add	a, 68
+	ld	e, a
+	cp	a, 15
+	jr	c, BB12_111
+	ld	a, c
+	cp	a, 11
+	ld	(ix - 22), h
+	jr	nc, BB12_122
+BB12_111:
+	ld	a, e
+	cp	a, 15
+	ld	a, -80
+	jr	c, BB12_113
+	ld	a, -79
+BB12_113:
+	add	a, l
+	ld	(_render.ascii_storage), a
+	ld	a, 1
+	ld	(ix - 22), a
+	ld	hl, _render.ascii_storage
+	jr	BB12_121
+BB12_114:
+	cp	a, -17
+	jp	nz, BB12_152
+	push	de
+	pop	bc
+	lea	de, iy
+	ld	iy, _program
+	add	iy, de
+	ld	a, (iy + 1)
+	cp	a, 56
+	ld	a, -1
+	jr	z, BB12_117
+	ld	a, 0
+BB12_117:
+	bit	0, a
+	ld	l, 7
+	ld	(ix - 22), l
+	jr	nz, BB12_119
+	ld	(ix - 22), h
+BB12_119:
+	bit	0, a
+	ld	hl, _.str.29
+	ld	iy, (ix - 12)
+	jr	nz, BB12_121
+BB12_120:
+	push	bc
+	pop	hl
+BB12_121:
+	ld	(ix - 25), hl
+BB12_122:
+	push	iy
+	call	_get_token_size
+	pop	hl
+	ld	de, 0
+	ld	e, a
+	ld	hl, (ix - 12)
+	add	hl, de
+	bit	0, (ix - 31)
+	ld	(ix - 38), hl
+	jr	z, BB12_131
+	ld	a, (ix - 22)
+	or	a, a
+	jr	nz, BB12_131
+	ld	a, (ix - 9)
+	cp	a, 41
+	jr	z, BB12_126
+	cp	a, 63
+	jr	nz, BB12_131
+BB12_126:
+	cp	a, 63
+	ld	hl, 4
+	jr	z, BB12_128
+	ld	hl, (ix - 44)
+BB12_128:
+	cp	a, 41
+	ld	de, 8
+	jr	z, BB12_130
+	ex	de, hl
+BB12_130:
+	ld	(ix - 44), de
+	ld	hl, 122
+	push	hl
+	call	_gfx_SetColor
+	pop	hl
+	or	a, a
+	sbc	hl, hl
+	ld	de, (ix - 18)
+	ld	l, e
+	ld	de, 8
+	push	de
+	ld	de, (ix - 44)
+	push	de
+	push	hl
+	ld	hl, (ix - 15)
+	push	hl
+	call	_gfx_FillRectangle
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	hl, -9
+	push	hl
+	call	_gfx_SetColor
+	pop	hl
+	ld	bc, 0
+	push	bc
+	pop	iy
+	ld	bc, (ix - 21)
+	ld	hl, (ix - 12)
+	jr	BB12_132
+BB12_131:
+	ld	hl, (ix - 12)
+	ld	bc, 0
+	push	bc
+	pop	iy
+	ld	bc, (ix - 21)
+BB12_132:
+	ld	de, (ix - 28)
+	ld	a, (ix - 22)
+	or	a, a
+	ld	(ix - 31), iy
+	ld	a, 0
+	jp	z, BB12_141
+	or	a, a
+	sbc	hl, hl
+	ld	l, (ix - 22)
+	ld	c, 3
+	call	__ishl
+	push	hl
+	pop	iy
+	ld	(ix - 31), iy
+	ld	de, (ix - 15)
+	add	iy, de
+	lea	hl, iy
+	ld	de, 311
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	ld	a, -1
+	jp	p, BB12_135
+	ld	a, 0
+BB12_135:
+	lea	hl, iy
+	ld	de, 310
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	lea	hl, iy
+	jp	m, BB12_137
+	ld	hl, 310
+BB12_137:
+	ld	de, (ix - 15)
+	or	a, a
+	sbc	hl, de
+	push	hl
+	pop	de
+	lea	hl, iy
+	ld	bc, 311
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	ld	bc, 0
+	push	bc
+	pop	iy
+	jp	p, BB12_140
+	push	de
+	pop	hl
+	ld	bc, 8
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	m, BB12_140
+	ex	de, hl
+	ld	c, 3
+	call	__ishru
+	ld	de, (ix - 18)
+	push	de
+	ld	de, (ix - 15)
+	push	de
+	push	hl
+	ld	hl, (ix - 25)
+	push	hl
+	ld	(ix - 32), a
+	call	_draw_string_max_chars
+	ld	a, (ix - 32)
+	ld	bc, 0
+	push	bc
+	pop	iy
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+BB12_140:
+	ld	bc, (ix - 21)
+	ld	hl, (ix - 12)
+	ld	de, (ix - 28)
+BB12_141:
+	ld	(ix - 32), a
+	ld	a, (_program+45064)
+	or	a, a
+	sbc	hl, de
+	jr	nz, BB12_146
+	or	a, a
+	jr	nz, BB12_146
+	or	a, a
+	sbc	hl, hl
+	push	hl
+	pop	iy
+	ld	hl, (ix - 18)
+	ex	de, hl
+	ld	iyl, e
+	ex	de, hl
+	ld	(ix - 12), iy
+	ld	bc, 9
+	add	iy, bc
+	ld	hl, (ix - 31)
+	ld	bc, 248
+	call	__iand
+	ld	a, (ix - 22)
+	or	a, a
+	ld	de, 8
+	jr	z, BB12_145
+	ex	de, hl
+BB12_145:
+	ld	hl, 3
+	push	hl
+	push	de
+	push	iy
+	ld	hl, (ix - 15)
+	push	hl
+	call	_gfx_FillRectangle
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	de, (ix - 15)
+	dec	de
+	ld	hl, 8
+	push	hl
+	ld	hl, 2
+	push	hl
+	ld	hl, (ix - 12)
+	push	hl
+	push	de
+	call	_gfx_FillRectangle
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	bc, 0
+	push	bc
+	pop	iy
+	ld	bc, (ix - 21)
+BB12_146:
+	ld	(ix - 21), bc
+	ld	a, (ix - 9)
+	cp	a, 63
+	ld	de, (ix - 18)
+	jr	z, BB12_150
+	ld	bc, (ix - 15)
+	ld	iy, (ix - 31)
+	add	iy, bc
+	lea	hl, iy
+	ld	bc, 8
+	add	hl, bc
+	cp	a, 41
+	jr	z, BB12_149
+	lea	hl, iy
+BB12_149:
+	bit	0, (ix - 32)
+	ld	iy, 0
+	jp	z, BB12_160
+BB12_150:
+	lea	bc, iy
+	ld	a, e
+	add	a, 10
+	ld	l, a
+	ld	(ix - 18), hl
+	ld	de, (_program+45058)
+	dec	de
+	ld	iy, (ix - 21)
+	lea	hl, iy
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	p, BB12_208
+	inc	iy
+	ld	(ix - 21), iy
+	lea	hl, iy
+	push	bc
+	pop	iy
+	ld	bc, 3
+	call	__imulu
+	push	hl
+	pop	de
+	ld	hl, _program+32770
+	add	hl, de
+	ld	hl, (hl)
+	inc	hl
+	ld	(ix - 12), hl
+	or	a, a
+	sbc	hl, hl
+	ld	de, (ix - 18)
+	ld	l, e
+	ld	de, 8
+	push	de
+	ld	de, 2
+	push	de
+	push	hl
+	push	iy
+	call	_gfx_FillRectangle
+	ld	iy, (ix - 12)
+	ld	de, (ix - 18)
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	hl, 5
+	jr	BB12_161
+BB12_152:
+	cp	a, 94
+	jr	nz, BB12_162
+	ld	(ix - 25), de
+	lea	de, iy
+	ld	iy, _program
+	add	iy, de
+	ld	a, (iy + 1)
+	cp	a, -128
+	ld	bc, _.str.30
+	jr	z, BB12_155
+	ld	bc, (ix - 25)
+BB12_155:
+	cp	a, -127
+	ld	de, _.str.31
+	jr	z, BB12_157
+	push	bc
+	pop	de
+BB12_157:
+	cp	a, -125
+	call	pe, __setflag
+	ld	l, 1
+	ld	(ix - 22), l
+	ld	iy, (ix - 12)
+	jp	m, BB12_159
+	ld	(ix - 22), h
+BB12_159:
+	cp	a, -126
+	ld	hl, _.str.32
+	ld	(ix - 25), hl
+	jp	z, BB12_122
+	jp	BB12_207
+BB12_160:
+	ld	iy, (ix - 38)
+BB12_161:
+	ld	(ix - 15), hl
+	ld	bc, 0
+	ld	(ix - 18), de
+	ld	a, e
+	cp	a, -36
+	jp	c, BB12_17
+	jp	BB12_209
+BB12_162:
+	cp	a, 98
+	jp	nz, BB12_206
+	ld	(ix - 25), de
+	lea	de, iy
+	ld	iy, _program
+	add	iy, de
+	ld	l, (iy + 1)
+	ld	iyl, -1
+	ld	b, iyl
+	ld	a, l
+	cp	a, 2
+	ld	c, b
+	jr	z, BB12_165
+	ld	c, 0
+BB12_165:
+	bit	0, c
+	ld	iy, _.str.18
+	jr	nz, BB12_167
+	ld	iy, (ix - 25)
+BB12_167:
+	ld	a, l
+	cp	a, 18
+	ld	e, b
+	jr	z, BB12_169
+	ld	e, 0
+BB12_169:
+	ld	a, e
+	or	a, c
+	bit	0, a
+	ld	d, 1
+	jr	nz, BB12_171
+	ld	d, h
+BB12_171:
+	bit	0, e
+	ld	bc, _.str.1
+	jr	nz, BB12_173
+	lea	bc, iy
+BB12_173:
+	ld	a, l
+	cp	a, 19
+	ld	a, -1
+	jr	z, BB12_175
+	ld	a, 0
+BB12_175:
+	bit	0, a
+	ld	e, 3
+	ld	h, e
+	jr	nz, BB12_177
+	ld	h, d
+BB12_177:
+	bit	0, a
+	ld	de, _.str.19
+	jr	nz, BB12_179
+	push	bc
+	pop	de
+BB12_179:
+	ld	a, l
+	cp	a, 22
+	ld	bc, _.str.20
+	jr	z, BB12_181
+	push	de
+	pop	bc
+BB12_181:
+	ld	a, l
+	and	a, -2
+	ld	e, a
+	ld	a, l
+	cp	a, 23
+	ld	iy, _.str.21
+	jr	z, BB12_183
+	push	bc
+	pop	iy
+BB12_183:
+	ld	a, l
+	cp	a, 24
+	ld	c, -1
+	jr	z, BB12_185
+	ld	c, 0
+BB12_185:
+	ld	a, e
+	cp	a, 22
+	ld	e, -1
+	jr	z, BB12_187
+	ld	e, 0
+BB12_187:
+	ld	a, c
+	or	a, e
+	ld	(ix - 22), a
+	bit	0, c
+	ld	bc, _.str.22
+	jr	nz, BB12_189
+	lea	bc, iy
+BB12_189:
+	ld	a, l
+	cp	a, 25
+	ld	de, _.str.23
+	jr	z, BB12_191
+	push	bc
+	pop	de
+BB12_191:
+	ld	(ix - 32), h
+	ld	a, l
+	add	a, -25
+	ld	c, a
+	ld	a, l
+	cp	a, 26
+	ld	iy, _.str.24
+	jr	z, BB12_193
+	push	de
+	pop	iy
+BB12_193:
+	ld	a, l
+	cp	a, 34
+	ld	h, -1
+	jr	z, BB12_195
+	ld	h, 0
+BB12_195:
+	ld	a, c
+	cp	a, 2
+	sbc	a, a
+	ld	c, a
+	ld	a, h
+	or	a, c
+	ld	(ix - 25), a
+	bit	0, h
+	ld	bc, _.str.25
+	jr	nz, BB12_197
+	lea	bc, iy
+BB12_197:
+	ld	a, l
+	cp	a, 35
+	ld	de, _.str.26
+	jr	z, BB12_199
+	push	bc
+	pop	de
+BB12_199:
+	ld	a, l
+	add	a, -35
+	ld	h, a
+	ld	a, l
+	cp	a, 36
+	ld	bc, _.str.27
+	ld	iyl, -1
+	jr	z, BB12_201
+	push	de
+	pop	bc
+BB12_201:
+	ld	a, l
+	cp	a, 52
+	ex	de, hl
+	ld	e, iyl
+	ex	de, hl
+	jr	z, BB12_203
+	ld	l, 0
+BB12_203:
+	ld	a, h
+	cp	a, 2
+	sbc	a, a
+	ld	h, a
+	ld	a, l
+	or	a, h
+	or	a, (ix - 25)
+	or	a, (ix - 22)
+	bit	0, a
+	ld	a, 1
+	ld	(ix - 22), a
+	ld	iy, (ix - 12)
+	jr	nz, BB12_205
+	ld	a, (ix - 32)
+	ld	(ix - 22), a
+BB12_205:
+	bit	0, l
+	ld	hl, _.str.28
+	jp	z, BB12_120
+	jp	BB12_121
+BB12_206:
+	ld	(ix - 22), h
+BB12_207:
+	ld	(ix - 25), de
+	jp	BB12_122
+BB12_208:
+	ld	hl, 5
+	ld	(ix - 15), hl
+	ld	bc, 0
+BB12_209:
+	ld	hl, (_program+45061)
+	ld	iy, _program+32768
+	ld	de, (iy)
+	ld	c, e
+	ld	b, d
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	ld	iy, 2
+	jp	m, BB12_211
+	ld	hl, (ix - 18)
+	ld	de, 0
+	ld	e, l
+	ld	(ix - 9), de
+	ex	de, hl
+	ld	de, 9
+	add	hl, de
+	ld	de, 3
+	push	de
+	ld	de, 8
+	push	de
+	push	hl
+	ld	hl, (ix - 15)
+	push	hl
+	call	_gfx_FillRectangle
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	de, (ix - 15)
+	dec	de
+	ld	hl, 8
+	push	hl
+	ld	hl, 2
+	push	hl
+	ld	hl, (ix - 9)
+	push	hl
+	push	de
+	call	_gfx_FillRectangle
+	ld	iy, 2
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+BB12_211:
+	ld	hl, (_program+49428)
+	ld	de, 3
+	push	de
+	pop	bc
+	call	__imulu
+	push	hl
+	pop	de
+	ld	bc, 240
+	or	a, a
+	sbc	hl, bc
+	ld	hl, 240
+	jr	c, BB12_213
+	ex	de, hl
+BB12_213:
+	ld	hl, 240
+	or	a, a
+	sbc	hl, de
+	push	de
+	push	iy
+	push	hl
+	ld	hl, 318
+	push	hl
+	call	_gfx_FillRectangle
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	hl, (_program+53530)
+	ld	bc, 3
+	call	__imulu
+	push	hl
+	pop	de
+	ld	bc, 240
+	or	a, a
+	sbc	hl, bc
+	ld	hl, 240
+	jr	c, BB12_215
+	push	hl
+	pop	de
+BB12_215:
+	or	a, a
+	sbc	hl, de
+	push	de
+	ld	de, 2
+	push	de
+	push	hl
+	ld	hl, 316
+	push	hl
+	call	_gfx_FillRectangle
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_get_selecting_range
+_get_selecting_range:
+	ld	hl, -6
+	call	__frameset
+	ld	bc, (_program+45061)
+	ld	de, (_program+45065)
+	push	bc
+	pop	hl
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	ld	(ix - 3), bc
+	jp	m, BB13_2
+	push	de
+	pop	bc
+BB13_2:
+	ld	(ix - 6), bc
+	push	de
+	pop	hl
+	ld	bc, (ix - 3)
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	m, BB13_4
+	ld	(ix - 3), de
+BB13_4:
+	ld	iy, (ix + 6)
+	ld	hl, (ix - 6)
+	ld	(iy), hl
+	ld	hl, (ix - 3)
+	push	hl
+	call	_get_token_size
+	pop	hl
+	ld	de, 0
+	ld	e, a
+	ld	hl, (ix - 3)
+	dec	hl
+	add	hl, de
+	ld	iy, (ix + 6)
+	ld	(iy + 3), hl
+	lea	hl, iy
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_draw_string_max_chars
+_draw_string_max_chars:
+	ld	hl, -6
+	call	__frameset
+	ld	hl, (ix + 6)
+	ld	(ix - 3), hl
+	ld	hl, (ix + 9)
+	ld	(ix - 6), hl
+	ld	hl, (ix + 12)
+	ld	e, (ix + 15)
+	push	de
+	push	hl
+	call	_fontlib_SetCursorPosition
+	pop	hl
+	pop	hl
+	ld	hl, (ix - 3)
+	ld	(ix + 6), hl
+	ld	hl, (ix - 6)
+	ld	(ix + 9), hl
+	ld	sp, ix
+	pop	ix
+	jp	_fontlib_DrawStringL
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_calculate_cursor_y
+_calculate_cursor_y:
+	ld	hl, -9
+	call	__frameset
+	or	a, a
+	sbc	hl, hl
+	ld	(ix - 3), hl
+	ld	de, (_program+45058)
+	ld	hl, (_program+45061)
+	ld	(ix - 6), hl
+	ld	bc, 1
+	push	de
+	pop	hl
+	sbc	hl, bc
+	call	pe, __setflag
+	ld	(ix - 9), de
+	jp	p, BB15_2
+	ld	de, 0
+BB15_2:
+	ld	iy, _program+32770
+BB15_3:
+	push	de
+	pop	hl
+	ld	bc, (ix - 3)
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB15_6
+	ld	hl, (iy)
+	ld	bc, (ix - 6)
+	or	a, a
+	sbc	hl, bc
+	ld	hl, (ix - 3)
+	call	pe, __setflag
+	jp	p, BB15_7
+	inc	hl
+	ld	(ix - 3), hl
+	lea	iy, iy + 3
+	jr	BB15_3
+BB15_6:
+	ld	hl, (ix - 9)
+BB15_7:
+	dec	hl
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_insert_token_u8
+_insert_token_u8:
+	ld	hl, -1
+	call	__frameset
+	ld	hl, (ix + 6)
+	ld	a, (ix + 9)
+	ld	(ix - 1), a
+	ld	de, 1
+	push	de
+	pea	ix - 1
+	push	hl
+	call	_insert_tokens
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_insert_token_u16
+_insert_token_u16:
+	ld	hl, -2
+	call	__frameset
+	ld	hl, (ix + 6)
+	ld	de, (ix + 9)
+	ld	(ix - 2), e
+	ld	(ix - 1), d
+	ld	de, 2
+	push	de
+	pea	ix - 2
+	push	hl
+	call	_insert_tokens
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_apply_delta_to_program
+_apply_delta_to_program:
+	call	__frameset0
+	ld	iy, (ix + 6)
+	ld	bc, (ix + 9)
+	ld	l, (iy)
+	ld	a, l
+	or	a, a
+	jr	nz, BB18_2
+	ld	hl, (iy + 4)
+	ld	de, (iy + 7)
+	push	bc
+	push	de
+	push	hl
+	call	_remove_tokens_
+	ld	bc, (ix + 9)
+	ld	iy, (ix + 6)
+	pop	hl
+	pop	hl
+	pop	hl
+	ld	l, (iy)
+BB18_2:
+	ld	a, l
+	cp	a, 1
+	jr	nz, BB18_4
+	ld	hl, (iy + 4)
+	ld	de, (iy + 7)
+	push	bc
+	push	de
+	pea	iy + 9
+	push	hl
+	call	_insert_tokens_
+	ld	iy, (ix + 6)
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+BB18_4:
+	ld	hl, (iy + 1)
+	ld	(_program+45061), hl
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_insert_tokens
+_insert_tokens:
+	call	__frameset0
+	ld	iy, (ix + 6)
+	ld	de, (ix + 9)
+	ld	bc, (ix + 12)
+	ld	hl, _program+45329
+	push	hl
+	push	bc
+	push	de
+	push	iy
+	call	_insert_tokens_
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+	or	a, a
+	sbc	hl, hl
+	ld	(_program+53527), hl
+	ld	(_program+53530), hl
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_remove_tokens
+_remove_tokens:
+	call	__frameset0
+	ld	hl, (ix + 6)
+	ld	de, (ix + 9)
+	ld	bc, _program+45329
+	push	bc
+	push	de
+	push	hl
+	call	_remove_tokens_
+	pop	hl
+	pop	hl
+	pop	hl
+	or	a, a
+	sbc	hl, hl
+	ld	(_program+53527), hl
+	ld	(_program+53530), hl
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_remove_tokens_
+_remove_tokens_:
+	ld	hl, -18
+	call	__frameset
+	ld	bc, (ix + 9)
+	ld	hl, (ix + 12)
+	ld	de, 0
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	ld	(ix - 12), de
+	jr	z, BB21_2
+	ld	de, (_program+45061)
+	ld	(ix - 3), de
+	ld	iy, _program
+	ld	de, (ix + 6)
+	add	iy, de
+	push	bc
+	push	iy
+	ld	de, (ix + 6)
+	push	de
+	ld	de, (ix - 3)
+	push	de
+	push	hl
+	call	_push_remove_delta
+	ld	de, 0
+	ld	bc, (ix + 9)
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+BB21_2:
+	ld	iy, 0
+	ld	iyl, c
+	ld	iyh, b
+	ld	(ix - 9), iy
+	dec	iy
+	ld	(ix - 6), iy
+	ld	bc, (ix + 6)
+	add	iy, bc
+	ld	(ix - 3), de
+	push	bc
+	pop	hl
+	push	bc
+	pop	de
+BB21_3:
+	lea	hl, iy
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	m, BB21_7
+	ld	hl, _program
+	add	hl, bc
+	ld	a, (hl)
+	cp	a, 63
+	ld	de, 1
+	jr	z, BB21_6
+	ld	de, 0
+BB21_6:
+	ld	hl, (ix - 3)
+	add	hl, de
+	inc	bc
+	ld	(ix - 3), hl
+	ld	de, (ix + 6)
+	jr	BB21_3
+BB21_7:
+	ld	hl, (ix - 3)
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	jp	z, BB21_20
+	ld	bc, (_program+45058)
+	ld	de, 1
+	push	bc
+	pop	hl
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	ld	(ix - 18), bc
+	jp	p, BB21_10
+	ld	bc, 0
+BB21_10:
+	ld	iy, _program+32770
+BB21_11:
+	push	bc
+	pop	hl
+	ld	de, (ix - 12)
+	or	a, a
+	sbc	hl, de
+	jr	z, BB21_14
+	ld	hl, (iy)
+	ld	de, (ix + 6)
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	p, BB21_15
+	ld	hl, (ix - 12)
+	inc	hl
+	ld	(ix - 12), hl
+	lea	iy, iy + 3
+	jr	BB21_11
+BB21_14:
+	ld	de, -1
+	jr	BB21_16
+BB21_15:
+	ld	de, (ix - 12)
+BB21_16:
+	ld	(ix - 12), de
+	push	de
+	pop	hl
+	ld	bc, (ix - 3)
+	add	hl, bc
+	ld	iy, 3
+	lea	bc, iy
+	call	__imulu
+	push	hl
+	pop	bc
+	ld	hl, _program+32770
+	add	hl, bc
+	ld	(ix - 15), hl
+	ex	de, hl
+	lea	bc, iy
+	call	__imulu
+	push	hl
+	pop	bc
+	ld	iy, _program
+	add	iy, bc
+	ld	bc, (ix - 3)
+	ld	de, 32770
+	add	iy, de
+	ld	hl, (ix - 18)
+BB21_17:
+	or	a, a
+	sbc	hl, bc
+	push	bc
+	pop	de
+	push	hl
+	pop	bc
+	ld	hl, (ix - 12)
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	p, BB21_19
+	ld	bc, (ix - 15)
+	push	bc
+	pop	hl
+	ld	hl, (hl)
+	ld	(iy), hl
+	ld	hl, (ix - 12)
+	inc	hl
+	ld	(ix - 12), hl
+	ld	hl, (_program+45058)
+	ld	(ix - 3), iy
+	push	bc
+	pop	iy
+	lea	iy, iy + 3
+	ld	(ix - 15), iy
+	ld	iy, (ix - 3)
+	lea	iy, iy + 3
+	push	de
+	pop	bc
+	jr	BB21_17
+BB21_19:
+	ld	(_program+45058), bc
+	ld	de, (ix + 6)
+BB21_20:
+	ld	iy, _program
+	ld	bc, (ix - 9)
+	add	iy, bc
+BB21_21:
+	ld	hl, _program+32768
+	ld	bc, (hl)
+	or	a, a
+	sbc	hl, hl
+	ld	l, c
+	ld	h, b
+	ld	bc, (ix - 6)
+	sbc	hl, bc
+	or	a, a
+	sbc	hl, de
+	call	pe, __setflag
+	jp	m, BB21_23
+	lea	hl, iy
+	add	hl, de
+	ld	a, (hl)
+	ld	hl, _program
+	add	hl, de
+	ld	(hl), a
+	inc	de
+	jr	BB21_21
+BB21_23:
+	ld	hl, (ix - 9)
+	call	__ineg
+	push	hl
+	ld	hl, (ix + 6)
+	push	hl
+	call	_offset_linebreaks
+	pop	hl
+	pop	hl
+	ld	hl, _program+32768
+	push	hl
+	pop	iy
+	ld	hl, (iy)
+	ld	de, (ix + 9)
+	or	a, a
+	sbc.sis	hl, de
+	ld	(iy), l
+	ld	(iy + 1), h
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_offset_linebreaks
+_offset_linebreaks:
+	ld	hl, -6
+	call	__frameset
+	ld	iy, _program
+	ld	bc, 3
+	ld	de, (_program+45058)
+	push	de
+	pop	hl
+	call	__imulu
+	push	hl
+	pop	bc
+	add	iy, bc
+	ld	bc, 32767
+	add	iy, bc
+	ld	bc, 1
+BB22_1:
+	ld	(ix - 3), de
+	ex	de, hl
+	push	bc
+	pop	de
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	m, BB22_4
+	ld	hl, (iy)
+	ld	(ix - 6), hl
+	ld	bc, (ix + 6)
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	m, BB22_4
+	ld	bc, (ix + 9)
+	ld	hl, (ix - 6)
+	add	hl, bc
+	ld	(iy), hl
+	lea	iy, iy - 3
+	ld	hl, (ix - 3)
+	dec	hl
+	push	de
+	pop	bc
+	ex	de, hl
+	jr	BB22_1
+BB22_4:
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_insert_tokens_
+_insert_tokens_:
+	ld	hl, -12
+	call	__frameset
+	ld	bc, (ix + 12)
+	ld	iy, _program+32768
+	ld	de, 0
+	ld	e, c
+	ld	d, b
+	ld	(ix - 3), de
+	ld	hl, (iy)
+	add.sis	hl, bc
+	ld	(iy), l
+	ld	(iy + 1), h
+	push	de
+	ld	hl, (ix + 6)
+	push	hl
+	call	_offset_linebreaks
+	pop	hl
+	pop	hl
+	ld	hl, (ix - 3)
+	push	hl
+	ld	hl, (ix + 6)
+	push	hl
+	call	_make_room_for_tokens
+	pop	hl
+	pop	hl
+	ld	hl, (ix - 3)
+	ld	bc, (ix + 9)
+	ld	iy, 0
+BB23_1:
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB23_5
+	ld	(ix - 6), iy
+	push	bc
+	pop	iy
+	ld	a, (iy)
+	cp	a, 63
+	ld	de, 1
+	jr	z, BB23_4
+	ld	de, 0
+BB23_4:
+	ld	iy, (ix - 6)
+	add	iy, de
+	inc	bc
+	dec	hl
+	jr	BB23_1
+BB23_5:
+	lea	hl, iy
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	push	iy
+	ld	hl, (ix + 6)
+	push	hl
+	call	nz, _make_room_for_linebreaks
+	ld	(ix - 9), hl
+	pop	hl
+	pop	hl
+	ld	iy, (ix + 6)
+	lea	bc, iy
+	ld	hl, _program
+	add	hl, bc
+	ld	(ix - 6), hl
+	ld	bc, 0
+BB23_6:
+	add	iy, bc
+	ld	hl, (ix - 3)
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB23_10
+	ld	hl, (ix + 9)
+	add	hl, bc
+	ld	a, (hl)
+	ex	de, hl
+	ld	hl, (ix - 6)
+	add	hl, bc
+	ld	(hl), a
+	ex	de, hl
+	ld	a, (hl)
+	cp	a, 63
+	jr	nz, BB23_9
+	ld	de, (ix - 9)
+	push	de
+	pop	hl
+	ld	(ix - 12), bc
+	ld	bc, 3
+	call	__imulu
+	push	hl
+	pop	bc
+	ld	hl, _program+32770
+	add	hl, bc
+	ld	bc, (ix - 12)
+	ld	(hl), iy
+	inc	de
+	ld	(ix - 9), de
+BB23_9:
+	ld	iy, (ix + 6)
+	inc	bc
+	jr	BB23_6
+BB23_10:
+	ld	hl, (ix + 15)
+	add	hl, bc
+	or	a, a
+	sbc	hl, bc
+	jr	z, BB23_12
+	ld	bc, (_program+45061)
+	ld	de, (ix + 12)
+	push	de
+	ld	de, (ix + 6)
+	push	de
+	push	bc
+	push	hl
+	call	_push_insert_delta
+	pop	hl
+	pop	hl
+	pop	hl
+	pop	hl
+BB23_12:
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_make_room_for_tokens
+_make_room_for_tokens:
+	ld	hl, -3
+	call	__frameset
+	ld	bc, (ix + 6)
+	ld	hl, (ix + 9)
+	ld	iy, _program+32768
+	ld	iy, (iy)
+	ld	de, 0
+	ld	e, iyl
+	ld	d, iyh
+	push	hl
+	pop	iy
+	add	iy, bc
+	dec	de
+	call	__ineg
+	push	hl
+	pop	bc
+	ld	hl, _program
+	add	hl, bc
+	ld	(ix - 3), hl
+BB24_1:
+	push	de
+	pop	bc
+	inc	bc
+	lea	hl, iy
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	p, BB24_3
+	ld	hl, (ix - 3)
+	add	hl, de
+	ld	a, (hl)
+	ld	hl, _program
+	add	hl, de
+	ld	(hl), a
+	dec	de
+	jr	BB24_1
+BB24_3:
+	pop	hl
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_make_room_for_linebreaks
+_make_room_for_linebreaks:
+	ld	hl, -15
+	call	__frameset
+	ld	iy, _program
+	ld	bc, 3
+	ld	de, (_program+45058)
+	push	de
+	pop	hl
+	call	__imulu
+	push	hl
+	pop	bc
+	add	iy, bc
+	ld	bc, 32767
+	add	iy, bc
+	ld	bc, 1
+	ld	(ix - 3), de
+BB25_1:
+	push	de
+	pop	hl
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	m, BB25_4
+	dec	de
+	ld	hl, (iy)
+	lea	iy, iy - 3
+	ld	bc, (ix + 6)
+	or	a, a
+	sbc	hl, bc
+	ld	bc, 1
+	call	pe, __setflag
+	jp	p, BB25_1
+	inc	de
+	jr	BB25_5
+BB25_4:
+	ld	de, -2
+BB25_5:
+	ld	iy, (ix - 3)
+	ld	hl, (ix + 9)
+	push	hl
+	pop	bc
+	add	iy, bc
+	ld	(ix - 12), iy
+	ld	(_program+45058), iy
+	ld	(ix - 9), de
+	ex	de, hl
+	add	hl, bc
+	ld	(ix - 15), hl
+	lea	hl, iy
+	ld	bc, 3
+	call	__imulu
+	push	hl
+	pop	bc
+	ld	iy, _program
+	lea	hl, iy
+	add	hl, bc
+	ex	de, hl
+	ld	hl, 32767
+	push	hl
+	pop	bc
+	ex	de, hl
+	add	hl, bc
+	ld	(ix - 6), hl
+	ld	hl, (ix - 3)
+	ld	bc, 3
+	call	__imulu
+	push	hl
+	pop	bc
+	ld	de, (ix - 15)
+	add	iy, bc
+	ld	bc, 32767
+	add	iy, bc
+	ld	bc, (ix - 12)
+BB25_6:
+	push	de
+	pop	hl
+	or	a, a
+	sbc	hl, bc
+	call	pe, __setflag
+	jp	p, BB25_8
+	dec	bc
+	ld	(ix - 3), iy
+	ld	hl, (iy)
+	ld	iy, (ix - 6)
+	ld	(iy), hl
+	lea	iy, iy - 3
+	ld	(ix - 6), iy
+	ld	iy, (ix - 3)
+	lea	iy, iy - 3
+	jr	BB25_6
+BB25_8:
+	ld	hl, (ix - 9)
+	ld	sp, ix
+	pop	ix
+	ret
+	section	.text,"ax",@progbits
+
+	section	.text,"ax",@progbits
+	public	_draw_string
+_draw_string:
+	ld	hl, -3
+	call	__frameset
+	ld	hl, (ix + 6)
+	ld	(ix - 3), hl
+	ld	hl, (ix + 9)
+	ld	e, (ix + 12)
+	push	de
+	push	hl
+	call	_fontlib_SetCursorPosition
+	pop	hl
+	pop	hl
+	ld	hl, (ix - 3)
+	ld	(ix + 6), hl
+	pop	hl
+	pop	ix
+	jp	_fontlib_DrawString
+	section	.text,"ax",@progbits
+
+	section	.data,"aw",@progbits
+	public	_editor_font
+_editor_font:
+	dl	_editor_font_data
+
+	section	.rodata,"a",@progbits
+	private	_.str
+_.str:
+	db	"THEOMGTR", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.1
+_.str.1:
+	db	"r", 0
+
+	section	.bss,"aw",@nobits
+	private	_program
+_program:
+	rb	53533
+
+	section	.bss,"aw",@nobits
+	private	_update_input.last_pressed
+_update_input.last_pressed:
+	rb	8
+
+	section	.bss,"aw",@nobits
+	public	_key_up
+_key_up:
+	rb	8
+
+	section	.bss,"aw",@nobits
+	public	_key_down
+_key_down:
+	rb	8
+
+	section	.bss,"aw",@nobits
+	public	_key_held
+_key_held:
+	rb	8
+
+	section	.bss,"aw",@nobits
+	public	_key_timers
+_key_timers:
+	rb	64
+
+	section	.bss,"aw",@nobits
+	public	_key_debounced
+_key_debounced:
+	rb	8
+
+	section	.bss,"aw",@nobits
+	private	_render.ascii_storage
+_render.ascii_storage:
+	rb	2
+
+	section	.rodata,"a",@progbits
+	private	_.str.2
+_.str.2:
+	db	",", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.3
+_.str.3:
+	db	".", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.4
+_.str.4:
+	db	"E", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.5
+_.str.5:
+	db	" or ", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.6
+_.str.6:
+	db	" xor ", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.7
+_.str.7:
+	db	":", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.8
+_.str.8:
+	db	"=", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.9
+_.str.9:
+	db	"-", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.10
+_.str.10:
+	db	"dim(", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.11
+_.str.11:
+	db	"If ", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.12
+_.str.12:
+	db	"Lbl ", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.13
+_.str.13:
+	db	"Goto ", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.14
+_.str.14:
+	db	"Disp ", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.15
+_.str.15:
+	db	"Menu(", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.16
+_.str.16:
+	db	"""", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.17
+_.str.17:
+	db	"", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.18
+_.str.18:
+	db	"n", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.19
+_.str.19:
+	db	"Med", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.20
+_.str.20:
+	db	"a", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.21
+_.str.21:
+	db	"b", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.22
+_.str.22:
+	db	"c", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.23
+_.str.23:
+	db	"d", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.24
+_.str.24:
+	db	"e", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.25
+_.str.25:
+	db	"p", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.26
+_.str.26:
+	db	"z", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.27
+_.str.27:
+	db	"t", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.28
+_.str.28:
+	db	"s", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.29
+_.str.29:
+	db	"CLASSIC", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.30
+_.str.30:
+	db	"u", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.31
+_.str.31:
+	db	"v", 0
+
+	section	.rodata,"a",@progbits
+	private	_.str.32
+_.str.32:
+	db	"w", 0
+
+	section	.rodata,"a",@progbits
+	private	_editor_font_data
+_editor_font_data:
+	db	0, "", 0, 0, "", 0, 0, "", 0, 0, 0, 0, 0, 0, 0, 0, " (08@HPX`hpxÄàêò†®∞∏¿»–ÿ‡Ë¯", 0, " (08@HPX`hpxÄàêò†®∞∏¿»–ÿ‡Ë¯", 0, " (08@HPX`hpxÄàêò†®∞∏¿»–ÿ‡Ë¯", 0, " (08@HPX`hpxÄàêò†®∞∏¿»–ÿ‡Ë¯", 0, " (08@HPX`hpxÄàêò†®∞∏¿»–ÿ‡Ë¯", 0, " (08@HPX`hpxÄàêò†®∞∏¿»–ÿ‡Ë¯", 0, "				 	(	0	8	@	H	P	X	`	h	p	x	Ä	à	ê	ò	†	®	∞	∏	¿	»	–	ÿ	‡	Ë		¯	", 0, 10, "", 10, "", 10, "", 10, " ", 10, "(", 10, "0", 10, "8", 10, "@", 10, "H", 10, "P", 10, "X", 10, "`", 10, "h", 10, "p", 10, "x", 10, "Ä", 10, "à", 10, "ê", 10, "ò", 10, "†", 10, "®", 10, "∞", 10, "∏", 10, "¿", 10, "»", 10, "–", 10, "ÿ", 10, "‡", 10, "Ë", 10, "", 10, "¯", 10, 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "˛", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "~îî$$""", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "ffD", 0, 0, 0, 0, 0, "$$˛$H˛HH", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, 0, " @@@@ (8", 0, 0, 0, 0, 0, "|", 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, "˛", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "00", 0, 0, 0, 0, 0, 0, 0, 0, "xƒ§§îîåx0Pê˛|ÇÇ0@Ä˛|Ç¸$D˛~ÄÄ¸¸<@Ä¸ÇÇÇ|˛  @@|ÇÇ|ÇÇÇ||ÇÇÇ~x", 0, "", 0, 0, "", 0, 0, "", 0, "0", 0, 0, " @ ", 0, 0, "~", 0, 0, 0, "~", 0, 0, "@  @<BB", 0, """JZRN (D|DÇÇxÑÑ∏ÇÇÇ|~ÄÄÄÄÄÄ~àÑÇÇÇÇ|~ÄÄ", 0, "ÄÄ¸~ÄÄ¯ÄÄÄÄ~ÄÄúÇÇÇ¸ÇÇÇ˛ÇÇÇÇ˛˛>ààxÑà∞pààÑÇÄÄÄÄÄÄÄ~Ç∆™™™ííÇÇ¬¢ííäÜÇ|ÇÇÇÇÇÇ||ÇÇÇú‡ÄÄ|ÇÇÇíîàv|ÇÇÇ¸∞àÜ~ÄÄp¸˛ÇÇÇÇÇÇÇ|ÇÇÇÇDD(Çííí™™∆ÇÇÇllÇÇÇÇD(˛", 10, " @Ä˛8      8@@  88(DD", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "¸", 0, 0, 0, 0, 0, 0, 0, "xtÑ¸", 0, "ÄÄ¯ÑÑÑ|", 0, 0, 0, "|ÄÄÄ¸", 0, "|ÑÑÑ¸", 0, 0, 0, "|Ñ∏Ä|", 0, "0@‡@@@@", 0, 0, 0, "|ÑÑt¸ÄÄÄààà", 0, 0, " ", 0, "    ", 0, 0, " ", 0, "    ¿", 0, "Ä»ààà", 0, 0, "      ", 0, 0, 0, "P®®®®", 0, 0, 0, "pàààà", 0, 0, 0, "pàààp", 0, 0, 0, "àà¯ÄÄ", 0, 0, "xààx", 0, 0, " @@@@", 0, 0, 0, "xÄp", 0, "@@‡@@@ ", 0, 0, 0, "ààààx", 0, 0, 0, "àààP ", 0, 0, 0, "à®®®P", 0, 0, 0, "àP Pà", 0, 0, 0, "ààx", 0, 0, "¯ @¯", 0, "8 `` 80000000088", 0, 0, "d§ò"
+	db	1035 dup 0
+
+	ident	"clang version 15.0.0 (https://github.com/jacobly0/llvm-project 5f8512f22751066573aa48ac848a6d2195838ac3)"
+	extern	__Unwind_SjLj_Unregister
+	extern	_fontlib_SetFirstPrintableCodePoint
+	extern	__Unwind_SjLj_Register
+	extern	_msleep
+	extern	_gfx_Begin
+	extern	_ti_OpenVar
+	extern	__ishl
+	extern	_ti_Read
+	extern	__setflag
+	extern	__iand
+	extern	_gfx_FillRectangle
+	extern	_ti_GetSize
+	extern	__ineg
+	extern	_fontlib_SetCursorPosition
+	extern	__frameset
+	extern	_fontlib_SetBackgroundColor
+	extern	_kb_Scan
+	extern	_fontlib_DrawString
+	extern	_fontlib_SetForegroundColor
+	extern	_fontlib_SetFont
+	extern	_gfx_SwapDraw
+	extern	__ishru
+	extern	_gfx_SetDraw
+	extern	_gfx_FillScreen
+	extern	_fontlib_DrawStringL
+	extern	__imulu
+	extern	_gfx_SetColor
+	extern	_gfx_End
+	extern	__frameset0
+	extern	_clock

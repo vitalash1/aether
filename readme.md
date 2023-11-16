@@ -1,0 +1,1 @@
+all rights reserved, contact me for permission to use/modify/redistribute code, and i'll happily read your request
