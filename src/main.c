@@ -37,6 +37,11 @@ Range get_selecting_range();
 // ^ tibasicdev has more accurate token tables, but worse formatting.
 //   it also has an inaccuracy on "CLASSIC" token?
 
+// get token string
+// https://ce-programming.github.io/toolchain/libraries/fileioc.html?highlight=gettoken#_CPPv417ti_GetTokenStringPPvP7uint8_tPj
+// http://tibasicdev.wikidot.com/83lgfont
+// https://github.com/RoccoLoxPrograms/OSFonts/blob/main/LargeFontCodes.png
+
 // https://ce-programming.github.io/toolchain/libraries/fontlibc.html#creating-fonts
 // http://hukka.ncn.fi/?fony
 
@@ -66,7 +71,44 @@ const fontlib_font_t *editor_font = (fontlib_font_t*)editor_font_data;
 #define LINEBREAK 0x3F
 #define SPACE 0x29
 
+#define FONT_WIDTH 7
+#define FONT_HEIGHT 8
+
 #define ARRLEN(var) (sizeof((var)) / sizeof((var)[0]))
+
+typedef struct TokenList {
+    char *name;
+    s16 name_count;
+    u16 *tokens;
+    s16  tokens_count;
+} TokenList;
+
+typedef struct TokenDirectory {
+    s8 list_count;
+    TokenList lists[5];
+} TokenDirectory;
+
+// TODO: Tokens that I don't know the ID of (may be from new OS's not in old tables)
+// (aka IDK)
+// `Wait` `GraphColor(` `OpenLib(` `ExecLib`
+u16 CTRL[] = { 0xCE, 0xCF, 0xD0, 0xD3, 0xD1, 0xD2, 0xD4, 0xD8, 0xD6,
+               0xD7, 0xDA, 0xDB, 0xE6, 0x5F, 0xD5, 0xD9, 0x54BB, 0x45BB };
+// TODO: IDK `eval(` `toString(`
+u16 IO[]   = { 0xDC, 0xDD, 0xDE, 0xDF, 0xE5, 0xE0, 0xAD, 0xE1, 0xFB,
+               0x53BB, 0xE8, 0xE7, 0x2ABB, 0x56BB };
+// TODO: IDK any of the COLOR things in prgm
+u16 COLOR[] = {};
+#define DIR_PRGM 0
+TokenDirectory directories[] = {
+    { .list_count = 4, .lists = {
+        { .name = "CTRL" , .name_count = 4, .tokens = CTRL , .tokens_count = ARRLEN(CTRL) },
+        { .name = "I/O"  , .name_count = 3, .tokens = IO   , .tokens_count = ARRLEN(IO) },
+        { .name = "COLOR", .name_count = 5, .tokens = COLOR, .tokens_count = ARRLEN(COLOR) },
+        // NOTE: This gets hardcoded override treatment
+        { .name = "EXEC" , .name_count = 4, .tokens = null , .tokens_count = 0 },
+    } }
+};
+
 
 #define Delta_InsertTokens 0
 #define Delta_RemoveTokens 1
@@ -199,6 +241,12 @@ void push_remove_delta(DeltaCollection *collection, s24 cursor_was, s24 removed_
     }
 }
 
+typedef enum CursorMode {
+    CursorMode_Normal,
+    CursorMode_Second,
+    CursorMode_Alpha,
+} CursorMode;
+
 typedef struct LoadedProgram {
     u8 data[32768];
     u16 size;
@@ -218,10 +266,26 @@ typedef struct LoadedProgram {
     
     DeltaCollection undo_buffer;
     DeltaCollection redo_buffer;
+    
+    // NOTE: Null if closed. If `opened_directory.name == "EXEC"`
+    // then we have some hardcoded overrides to match TI-OS's functionality
+    TokenDirectory *opened_directory;
+    s24 opened_directory_list_index;
+    s24 opened_directory_token_index;
+    s24 opened_directory_view_top_token_index;
+    
+    CursorMode cursor_mode;
+    bool alpha_is_lowercase;
 } LoadedProgram;
 
-
 static LoadedProgram program = {};
+static bool global_running = true;
+
+typedef struct OS_Program {
+    u8 name[8];
+} OS_Program;
+OS_Program os_programs[512];
+s24        os_programs_count;
 
 u8 key_down[8];
 u8 key_held[8];
@@ -230,10 +294,35 @@ u8 key_debounced[8];
 u8 key_timers[8][8];
 
 int main() {
-    bool running = true;
     gfx_Begin();
     gfx_SetDrawBuffer();
     fontlib_SetFont(editor_font, 0);
+    
+    void *it = null;
+    while(true) {
+        char *name = ti_DetectVar(&it, null, OS_TYPE_PRGM);
+        if(!name) {
+            break;
+        } else {
+            bool name_valid = (name[0] != '!' && name[0] != '#');
+            if(name_valid) {
+                os_programs_count += 1;
+                char *dest = (char*)os_programs[os_programs_count - 1].name;
+                log("%s\n", name);
+                for(char *val = name; val <= val + 7; val += 1, dest += 1) {
+                    *dest = *val;
+                    if(*val == 0) {
+                        break;
+                    }
+                }
+                if(os_programs_count == ARRLEN(os_programs)) {
+                    break;
+                }
+            }
+        }
+    }
+    // NOTE: Hard-coded functionality
+    directories[DIR_PRGM].lists[3].tokens_count = cast(s16)os_programs_count;
     
     u8 load = ti_OpenVar("THEOMGTR", "r", OS_TYPE_PRGM);
     assert(load != 0, "Cannot open file");
@@ -275,7 +364,8 @@ int main() {
     s24 clock_counter = 0;
     u24 previous_clock = cast(u24)clock();
     
-    while(running) {
+    global_running = true;
+    while(global_running) {
         u24 current_clock = cast(u24)clock();
         s24 diff = cast(s24)(current_clock - previous_clock);
         previous_clock = current_clock;
@@ -293,7 +383,6 @@ int main() {
             if(ms_until_frame >= 50) msleep(ms_until_frame - 50);
         }
         
-        if(kb_Data[6] & kb_Clear) running = false;
     }
     
     gfx_End();
@@ -527,147 +616,348 @@ void apply_delta_to_program(Delta *delta, DeltaCollection *put_undo_for_this_act
     program.cursor = delta->cursor_was;
 }
 
+inline bool get_is_prgm_exec_override() {
+    return program.opened_directory == &directories[DIR_PRGM] && program.opened_directory_list_index == 3;
+}
+
 void update(void) {
     // NOTE: This will be updated after operations that affect cursor position/line breaks
     // We can afford to not update it after operations that affect cursor position but not line breaks
     // if we do that operation repeatedly and want to not iterate over linebreaks in the program much.
     s24 cursor_y = calculate_cursor_y();
-
-    if(key_down[4] & kb_5) {
-        insert_token_u8(program.cursor, 0xCE);
-        program.cursor += 1;
-    }
     
-    if(key_down[4] & kb_8) {
-        insert_token_u8(program.cursor, 0x41);
-        program.cursor += 1;
-    }
     
-    if(key_down[4] & kb_2) {
-        insert_token_u16(program.cursor, 0x1762);
-        program.cursor += 2;
-    }
-    
-    if(key_down[1] & kb_Graph) {
-        Delta* undo = pop_delta(&program.undo_buffer);
-        if(undo) {
-            apply_delta_to_program(undo, &program.redo_buffer);
-            cursor_y = calculate_cursor_y();
-        }
-    }
-    
-    if(key_down[1] & kb_Trace) {
-        Delta* redo = pop_delta(&program.redo_buffer);
-        if(redo) {
-            apply_delta_to_program(redo, &program.undo_buffer);
-            cursor_y = calculate_cursor_y();
-        }
-    }
-    
-    if(key_down[1] & kb_Yequ) {
-        // NOTE: Toggle selection
-        program.cursor_selecting = !program.cursor_selecting;
-        program.cursor_started_selecting = program.cursor;
-    }
-    if(key_down[1] & kb_Window) {
-        if(program.cursor_selecting) {
-            // Copy
-            Range range = get_selecting_range();
-            s24 size = (range.max + 1) - range.min;
-            assert(size >= 0, "Underflow error");
-            if(size <= 256) {
-                program.cursor_selecting = false;
-                program.clipboard_size = (u16)size;
-                copy(program.data + range.min, program.clipboard, size);
-            }
+    if(key_down[1] & kb_2nd) {
+        if(program.cursor_mode != CursorMode_Second) {
+            program.cursor_mode = CursorMode_Second;
         } else {
-            // Paste
-            insert_tokens(program.cursor, program.clipboard, program.clipboard_size);
+            program.cursor_mode = CursorMode_Normal;
         }
     }
-    if(key_down[1] & kb_Zoom) {
-        if(program.cursor_selecting) {
-            // Cut
-            Range range = get_selecting_range();
-            s24 size = (range.max + 1) - range.min;
-            assert(size >= 0, "Underflow error");
-            if(size <= 256) {
-                program.cursor_selecting = false;
-                program.clipboard_size = (u16)size;
-                copy(program.data + range.min, program.clipboard, size);
-                remove_tokens(range.min, (u16)size);
-                program.cursor = range.min;
+    if(key_down[2] & kb_Alpha) {
+        if(program.cursor_mode == CursorMode_Normal) {
+            program.cursor_mode = CursorMode_Alpha;
+            program.alpha_is_lowercase = false;
+        } else if(program.cursor_mode == CursorMode_Second) {
+            program.cursor_mode = CursorMode_Alpha;
+            program.alpha_is_lowercase = true;
+        } else if(program.cursor_mode == CursorMode_Alpha) {
+            program.cursor_mode = CursorMode_Normal;
+        }
+    }
+    
+    if(program.opened_directory) {
+        if((key_debounced[7] & kb_Right)) {
+            program.opened_directory_list_index += 1;
+            TokenList *list = program.opened_directory->lists + program.opened_directory_list_index;
+            if(list->tokens_count >= 1 && program.opened_directory_token_index >= list->tokens_count) {
+                program.opened_directory_token_index = list->tokens_count - 1;
             }
-        } else {
-            // Paste
-            insert_tokens(program.cursor, program.clipboard, program.clipboard_size);
-            program.cursor += program.clipboard_size;
+            if(list->tokens_count == 0) program.opened_directory_token_index = 0;
         }
-        cursor_y = calculate_cursor_y();
-    }
-    if(key_debounced[1] & kb_Del) {
-        if(program.cursor_selecting) {
-            Range range = get_selecting_range();
-            s24 size = (range.max + 1) - range.min;
-            if(size >= 0 && size <= 65536) {
-                remove_tokens(range.min, cast(u16)size);
-                program.cursor = range.min;
-                program.cursor_selecting = false;
+        if((key_debounced[7] & kb_Left)) {
+            program.opened_directory_list_index -= 1;
+            TokenList *list = program.opened_directory->lists + program.opened_directory_list_index;
+            if(list->tokens_count >= 1 && program.opened_directory_token_index >= list->tokens_count) {
+                program.opened_directory_token_index = list->tokens_count - 1;
+            }
+            if(list->tokens_count == 0) program.opened_directory_token_index = 0;
+        }
+        if(program.opened_directory_list_index < 0) program.opened_directory_list_index += program.opened_directory->list_count;
+        if(program.opened_directory_list_index >= program.opened_directory->list_count) program.opened_directory_list_index -= program.opened_directory->list_count;
+        TokenList *list = program.opened_directory->lists + program.opened_directory_list_index;
+        if(program.cursor_mode == CursorMode_Alpha) {
+            if((key_debounced[7] & kb_Up)) {
+                program.opened_directory_token_index -= 8;
+            }
+            if((key_debounced[7] & kb_Down)) {
+                program.opened_directory_token_index += 8;
+            }
+            if(program.opened_directory_token_index < 0) program.opened_directory_token_index = 0;
+            if(program.opened_directory_token_index >= list->tokens_count) program.opened_directory_token_index = list->tokens_count - 1;
+        } else {
+            if((key_debounced[7] & kb_Up)) {
+                program.opened_directory_token_index -= 1;
+            }
+            if((key_debounced[7] & kb_Down)) {
+                program.opened_directory_token_index += 1;
+            }
+            if(program.opened_directory_token_index < 0) program.opened_directory_token_index += list->tokens_count;
+            if(program.opened_directory_token_index >= list->tokens_count) program.opened_directory_token_index -= list->tokens_count;
+        }
+        bool select = false;
+        #define TRY(index) if(index <= list->tokens_count - 1) { select = true; program.opened_directory_token_index = index; }
+        if(program.cursor_mode != CursorMode_Alpha) {
+            if(key_down[3] & kb_1) { TRY(0) }
+            if(key_down[4] & kb_2) { TRY(1) }
+            if(key_down[5] & kb_3) { TRY(2) }
+            if(key_down[3] & kb_4) { TRY(3) }
+            if(key_down[4] & kb_5) { TRY(4) }
+            if(key_down[5] & kb_6) { TRY(5) }
+            if(key_down[3] & kb_7) { TRY(6) }
+            if(key_down[4] & kb_8) { TRY(7) }
+            if(key_down[5] & kb_9) { TRY(8) }
+            if(key_down[3] & kb_0) { TRY(9) }
+        } else {
+            if(key_down[2] & kb_Math)  { TRY(10) } // A
+            if(key_down[3] & kb_Apps)  { TRY(11) } // B
+            if(key_down[4] & kb_Prgm)  { TRY(12) } // C
+            if(key_down[2] & kb_Recip) { TRY(13) } // D
+            if(key_down[3] & kb_Sin)   { TRY(14) } // E
+            if(key_down[4] & kb_Cos)   { TRY(15) } // F
+            if(key_down[5] & kb_Tan)   { TRY(16) } // G
+            if(key_down[6] & kb_Power) { TRY(17) } // H
+            if(key_down[2] & kb_Square){ TRY(18) } // I
+            if(key_down[3] & kb_Comma) { TRY(19) } // J
+            if(key_down[4] & kb_LParen){ TRY(20) } // K
+            if(key_down[5] & kb_RParen){ TRY(21) } // L
+            if(key_down[6] & kb_Div)   { TRY(22) } // M
+            if(key_down[2] & kb_Log)   { TRY(23) } // N
+            if(key_down[3] & kb_7)     { TRY(24) } // O
+            if(key_down[4] & kb_8)     { TRY(25) } // P
+            if(key_down[5] & kb_9)     { TRY(26) } // Q
+            if(key_down[6] & kb_Mul)   { TRY(27) } // R
+            if(key_down[2] & kb_Ln)    { TRY(28) } // S
+            if(key_down[3] & kb_4)     { TRY(29) } // T
+            if(key_down[4] & kb_5)     { TRY(30) } // U
+            if(key_down[5] & kb_6)     { TRY(31) } // V
+            if(key_down[6] & kb_Sub)   { TRY(32) } // W
+            if(key_down[2] & kb_Sto)   { TRY(33) } // X
+            if(key_down[3] & kb_1)     { TRY(34) } // Y
+            if(key_down[4] & kb_2)     { TRY(35) } // Z
+        }
+        #undef TRY
+        if(key_down[6] & kb_Enter) select = true;
+        if(select) {
+            bool hardcode = get_is_prgm_exec_override();
+            if(hardcode) {
+                u8 tokens[9];
+                u8 tokens_count = 9;
+                char *name = cast(char*)os_programs[program.opened_directory_token_index].name;
+                for(u8 i = 0; i <= 8 - 1; ++i) {
+                    if(name[i] == 0) {
+                        tokens_count = i + 1;
+                        break;
+                    }
+                    tokens[i + 1] = (u8)name[i];
+                }
+                tokens[0] = 0x5F; // prgm
+                insert_tokens(program.cursor, tokens, tokens_count);
+                program.cursor += tokens_count;
             } else {
-                assert(size >= 0 && size <= 65536, "Must be within u16 range");
+                u16 token = list->tokens[program.opened_directory_token_index];
+                if((token >> 8) == 0) {
+                    insert_token_u8(program.cursor, cast(u8)token);
+                    program.cursor += 1;
+                } else {
+                    insert_token_u16(program.cursor, token);
+                    program.cursor += 2;
+                }
             }
-        } else {
-            remove_tokens(program.cursor, get_token_size(program.cursor));
+            program.opened_directory = null;
         }
-        cursor_y = calculate_cursor_y();
-    }
-    if(key_down[4] & kb_Stat) {
-        // NOTE: Clear line
-        s24 line_start = program.linebreaks[cursor_y] + 1;
-        s24 before_line_break_or_end_of_program = program.size - 1;
-        for(s24 i = line_start; i <= program.size - 1;) {
-            if(program.data[i] == LINEBREAK) {
-                before_line_break_or_end_of_program = i - 1;
-                break;
+        if(key_down[6] & kb_Clear) program.opened_directory = null;
+    } else {
+        if(key_down[6] & kb_Clear) global_running = false;
+        
+        if(program.cursor_mode == CursorMode_Normal) {
+            // TODO: what does "X,T,0,n" output?
+            // TODO: stat,math,apps,prgm,vars,draw,distr,matrix,test,list,catalog
+            if(key_down[4] & kb_Prgm) {
+                program.opened_directory = &directories[DIR_PRGM];
+                program.opened_directory_list_index = 0;
+                program.opened_directory_token_index = 0;
+                key_down[4] &= ~kb_Prgm;
             }
-            i += get_token_size(i);
+            if(key_down[2] & kb_Recip) { insert_token_u8(program.cursor, 0x0C); program.cursor += 1; }
+            if(key_down[3] & kb_Sin)   { insert_token_u8(program.cursor, 0xC2); program.cursor += 1; }
+            if(key_down[4] & kb_Cos)   { insert_token_u8(program.cursor, 0xC4); program.cursor += 1; } // F
+            if(key_down[5] & kb_Tan)   { insert_token_u8(program.cursor, 0xC6); program.cursor += 1; } // G
+            if(key_down[6] & kb_Power) { insert_token_u8(program.cursor, 0xF0); program.cursor += 1; } // H
+            if(key_down[2] & kb_Square){ insert_token_u8(program.cursor, 0x0D); program.cursor += 1; } // I
+            if(key_down[3] & kb_Comma) { insert_token_u8(program.cursor, 0x2B); program.cursor += 1; } // J
+            if(key_down[4] & kb_LParen){ insert_token_u8(program.cursor, 0x10); program.cursor += 1; } // K
+            if(key_down[5] & kb_RParen){ insert_token_u8(program.cursor, 0x11); program.cursor += 1; } // L
+            if(key_down[6] & kb_Div)   { insert_token_u8(program.cursor, 0x83); program.cursor += 1; } // M
+            if(key_down[2] & kb_Log)   { insert_token_u8(program.cursor, 0xC0); program.cursor += 1; } // N
+            if(key_down[3] & kb_7)     { insert_token_u8(program.cursor, 0x37); program.cursor += 1; } // O
+            if(key_down[4] & kb_8)     { insert_token_u8(program.cursor, 0x38); program.cursor += 1; } // P
+            if(key_down[5] & kb_9)     { insert_token_u8(program.cursor, 0x39); program.cursor += 1; } // Q
+            if(key_down[6] & kb_Mul)   { insert_token_u8(program.cursor, 0x82); program.cursor += 1; } // R
+            if(key_down[2] & kb_Ln)    { insert_token_u8(program.cursor, 0xBE); program.cursor += 1; } // S
+            if(key_down[3] & kb_4)     { insert_token_u8(program.cursor, 0x34); program.cursor += 1; } // T
+            if(key_down[4] & kb_5)     { insert_token_u8(program.cursor, 0x35); program.cursor += 1; } // U
+            if(key_down[5] & kb_6)     { insert_token_u8(program.cursor, 0x36); program.cursor += 1; } // V
+            if(key_down[6] & kb_Sub)   { insert_token_u8(program.cursor, 0x71); program.cursor += 1; } // W
+            if(key_down[2] & kb_Sto)   { insert_token_u8(program.cursor, 0x04); program.cursor += 1; } // X
+            if(key_down[3] & kb_1)     { insert_token_u8(program.cursor, 0x31); program.cursor += 1; } // Y
+            if(key_down[4] & kb_2)     { insert_token_u8(program.cursor, 0x32); program.cursor += 1; } // Z
+            if(key_down[5] & kb_3)     { insert_token_u8(program.cursor, 0x33); program.cursor += 1; }
+            if(key_down[6] & kb_Add)   { insert_token_u8(program.cursor, 0x70); program.cursor += 1; }
+            if(key_down[3] & kb_0)     { insert_token_u8(program.cursor, 0x30); program.cursor += 1; }
+            if(key_down[4] & kb_DecPnt){ insert_token_u8(program.cursor, 0x3A); program.cursor += 1; }
+            if(key_down[5] & kb_Chs)   { insert_token_u8(program.cursor, 0xB0); program.cursor += 1; }
         }
-        if(before_line_break_or_end_of_program > line_start) {
-            s24 size = (before_line_break_or_end_of_program + 1) - line_start;
-            if(size >= 0 && size < 65535) {
-                remove_tokens(line_start, cast(u16)size);
-                program.cursor = line_start;
+        else if(program.cursor_mode == CursorMode_Alpha) {
+            if(key_down[2] & kb_Math)  { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB0BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'A'); program.cursor += 1; } } // A
+            if(key_down[3] & kb_Apps)  { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB1BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'B'); program.cursor += 1; } } // B
+            if(key_down[4] & kb_Prgm)  { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB2BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'C'); program.cursor += 1; } } // C
+            if(key_down[2] & kb_Recip) { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB3BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'D'); program.cursor += 1; } } // D
+            if(key_down[3] & kb_Sin)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB4BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'E'); program.cursor += 1; } } // E
+            if(key_down[4] & kb_Cos)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB5BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'F'); program.cursor += 1; } } // F
+            if(key_down[5] & kb_Tan)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB6BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'G'); program.cursor += 1; } } // G
+            if(key_down[6] & kb_Power) { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB7BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'H'); program.cursor += 1; } } // H
+            if(key_down[2] & kb_Square){ if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB8BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'I'); program.cursor += 1; } } // I
+            if(key_down[3] & kb_Comma) { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB9BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'J'); program.cursor += 1; } } // J
+            if(key_down[4] & kb_LParen){ if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBABB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'K'); program.cursor += 1; } } // K
+            if(key_down[5] & kb_RParen){ if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBCBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'L'); program.cursor += 1; } } // L
+            if(key_down[6] & kb_Div)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBDBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'M'); program.cursor += 1; } } // M
+            if(key_down[2] & kb_Log)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBEBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'N'); program.cursor += 1; } } // N
+            if(key_down[3] & kb_7)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBFBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'O'); program.cursor += 1; } } // O
+            if(key_down[4] & kb_8)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC0BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'P'); program.cursor += 1; } } // P
+            if(key_down[5] & kb_9)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC1BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'Q'); program.cursor += 1; } } // Q
+            if(key_down[6] & kb_Mul)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC2BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'R'); program.cursor += 1; } } // R
+            if(key_down[2] & kb_Ln)    { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC3BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'S'); program.cursor += 1; } } // S
+            if(key_down[3] & kb_4)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC4BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'T'); program.cursor += 1; } } // T
+            if(key_down[4] & kb_5)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC5BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'U'); program.cursor += 1; } } // U
+            if(key_down[5] & kb_6)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC6BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'V'); program.cursor += 1; } } // V
+            if(key_down[6] & kb_Sub)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC7BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'W'); program.cursor += 1; } } // W
+            if(key_down[2] & kb_Sto)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC8BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'X'); program.cursor += 1; } } // X
+            if(key_down[3] & kb_1)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC9BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'Y'); program.cursor += 1; } } // Y
+            if(key_down[4] & kb_2)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xCABB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'Z'); program.cursor += 1; } } // Z
+            if(key_down[5] & kb_3)     { insert_token_u8(program.cursor, 0x5B); program.cursor += 1; }
+            if(key_down[6] & kb_Add)   { insert_token_u8(program.cursor, 0x2A); program.cursor += 1; }
+            if(key_down[3] & kb_0)     { insert_token_u8(program.cursor, SPACE); program.cursor += 1; }
+            if(key_down[4] & kb_DecPnt){ insert_token_u8(program.cursor, 0x3E); program.cursor += 1; }
+            if(key_down[5] & kb_Chs)   { insert_token_u8(program.cursor, 0xAF); program.cursor += 1; }
+        }
+        
+        if(key_down[1] & kb_Graph) {
+            Delta* undo = pop_delta(&program.undo_buffer);
+            if(undo) {
+                apply_delta_to_program(undo, &program.redo_buffer);
                 cursor_y = calculate_cursor_y();
-            } else {
-                assert(size >= 0 && size < 65535, "Must be within u16 range");
             }
         }
-    }
-    if(key_debounced[6] & kb_Enter) {
-        insert_token_u8(program.cursor, LINEBREAK);
-        program.cursor += 1;
-    }
-    if(key_debounced[7] & kb_Down) {
-        if(cursor_y < program.linebreaks_count - 1) {
-            program.cursor = program.linebreaks[cursor_y + 1] + 1;
+        
+        if(key_down[1] & kb_Trace) {
+            Delta* redo = pop_delta(&program.redo_buffer);
+            if(redo) {
+                apply_delta_to_program(redo, &program.undo_buffer);
+                cursor_y = calculate_cursor_y();
+            }
         }
-    }
-    if(key_debounced[7] & kb_Up) {
-        if(cursor_y > 0) {
-            program.cursor = program.linebreaks[cursor_y - 1] + 1;
+        
+        if(key_down[1] & kb_Yequ) {
+            // NOTE: Toggle selection
+            program.cursor_selecting = !program.cursor_selecting;
+            program.cursor_started_selecting = program.cursor;
         }
-    }
-    if(key_debounced[7] & kb_Left) {
-        if(program.cursor > 0) {
-            u8 prev_token_size = get_token_size(program.cursor - 1);
-            program.cursor -= prev_token_size;
+        if(key_down[1] & kb_Window) {
+            if(program.cursor_selecting) {
+                // Copy
+                Range range = get_selecting_range();
+                s24 size = (range.max + 1) - range.min;
+                assert(size >= 0, "Underflow error");
+                if(size <= 256) {
+                    program.cursor_selecting = false;
+                    program.clipboard_size = (u16)size;
+                    copy(program.data + range.min, program.clipboard, size);
+                }
+            } else {
+                // Paste
+                insert_tokens(program.cursor, program.clipboard, program.clipboard_size);
+            }
+            cursor_y = calculate_cursor_y();
         }
-    }
-    if(key_debounced[7] & kb_Right) {
-        u8 size = get_token_size(program.cursor);
-        program.cursor += size;
-        if(program.cursor >= program.size) {
-            program.cursor = program.size;
+        if(key_down[1] & kb_Zoom) {
+            if(program.cursor_selecting) {
+                // Cut
+                Range range = get_selecting_range();
+                s24 size = (range.max + 1) - range.min;
+                assert(size >= 0, "Underflow error");
+                if(size <= 256) {
+                    program.cursor_selecting = false;
+                    program.clipboard_size = (u16)size;
+                    copy(program.data + range.min, program.clipboard, size);
+                    remove_tokens(range.min, (u16)size);
+                    program.cursor = range.min;
+                }
+            } else {
+                // Paste
+                insert_tokens(program.cursor, program.clipboard, program.clipboard_size);
+                program.cursor += program.clipboard_size;
+            }
+            cursor_y = calculate_cursor_y();
+        }
+        if(key_debounced[1] & kb_Del) {
+            if(program.cursor_selecting) {
+                Range range = get_selecting_range();
+                s24 size = (range.max + 1) - range.min;
+                if(size >= 0 && size <= 65536) {
+                    remove_tokens(range.min, cast(u16)size);
+                    program.cursor = range.min;
+                    program.cursor_selecting = false;
+                } else {
+                    assert(size >= 0 && size <= 65536, "Must be within u16 range");
+                }
+            } else {
+                remove_tokens(program.cursor, get_token_size(program.cursor));
+            }
+            cursor_y = calculate_cursor_y();
+        }
+        if(key_down[1] & kb_Mode) {
+            // NOTE: Clear line
+            s24 line_start = program.linebreaks[cursor_y] + 1;
+            s24 before_line_break_or_end_of_program = program.size - 1;
+            for(s24 i = line_start; i <= program.size - 1;) {
+                if(program.data[i] == LINEBREAK) {
+                    before_line_break_or_end_of_program = i - 1;
+                    break;
+                }
+                i += get_token_size(i);
+            }
+            if(before_line_break_or_end_of_program >= line_start) {
+                s24 size = (before_line_break_or_end_of_program + 1) - line_start;
+                if(size >= 0 && size < 65535) {
+                    remove_tokens(line_start, cast(u16)size);
+                    program.cursor = line_start;
+                    cursor_y = calculate_cursor_y();
+                } else {
+                    assert(size >= 0 && size < 65535, "Must be within u16 range");
+                }
+            }
+        }
+        if(key_debounced[6] & kb_Enter) {
+            insert_token_u8(program.cursor, LINEBREAK);
+            program.cursor += 1;
+        }
+        if(key_debounced[7] & kb_Down) {
+            s24 target_cursor = cursor_y;
+            if(program.cursor_mode == CursorMode_Alpha) target_cursor += 8;
+            else target_cursor += 1;
+            if(target_cursor >= program.linebreaks_count - 1) target_cursor = program.linebreaks_count - 1;
+            program.cursor = program.linebreaks[target_cursor] + 1;
+        }
+        if(key_debounced[7] & kb_Up) {
+            s24 target_cursor = cursor_y;
+            if(program.cursor_mode == CursorMode_Alpha) target_cursor -= 8;
+            else target_cursor -= 1;
+            if(target_cursor < 0) target_cursor = 0;
+            program.cursor = program.linebreaks[target_cursor] + 1;
+        }
+        if(key_debounced[7] & kb_Left) {
+            if(program.cursor > 0) {
+                u8 prev_token_size = get_token_size(program.cursor - 1);
+                program.cursor -= prev_token_size;
+            }
+        }
+        if(key_debounced[7] & kb_Right) {
+            u8 size = get_token_size(program.cursor);
+            program.cursor += size;
+            if(program.cursor >= program.size) {
+                program.cursor = program.size;
+            }
         }
     }
 }
@@ -706,165 +996,200 @@ u8 get_token_size(s24 pos) {
 }
 
 void render(void) {
-    static u8 ascii_storage[2];
-    ascii_storage[1] = 0;
-    s24 cursor_y = program.linebreaks_count - 1;
-    for(int i = 0; i <= program.linebreaks_count - 1; ++i) {
-        if(program.cursor <= program.linebreaks[i]) {
-            cursor_y = i - 1;
-            break;
-        }
-    }
-    
     gfx_FillScreen(BACKGROUND);
-    //gfx_SetTextFGColor(FOREGROUND);
-    fontlib_SetForegroundColor(FOREGROUND);
-    fontlib_SetBackgroundColor(BACKGROUND);
-    fontlib_SetFirstPrintableCodePoint(0);
-    gfx_SetColor(FOREGROUND);
-    int x = 5;
-    u8 y = 5;
-    if(cursor_y < program.view_top_line) {
-        program.view_top_line = cursor_y;
-    }
-    if(cursor_y > program.view_top_line + 21) {
-        program.view_top_line = cursor_y - 21;
-    }
-    int first_token = program.linebreaks[program.view_top_line] + 1;
-    gfx_FillRectangle(0,y,2,8);
-    s24 current_view_y = program.view_top_line;
-    Range selection;
-    if(program.cursor_selecting) selection = get_selecting_range();
-    for(int i = first_token; i < program.size;) {
-        bool on_cursor = (i == program.cursor);
-        bool selected = on_cursor;
-        if(program.cursor_selecting) {
-            selected = i >= selection.min && i <= selection.max;
+    if(program.opened_directory) {
+        if(program.opened_directory_token_index - program.opened_directory_view_top_token_index >= 22) {
+            program.opened_directory_view_top_token_index = program.opened_directory_token_index - 22;
         }
-        if(selected) { fontlib_SetBackgroundColor(HIGHLIGHT); }
-        else { fontlib_SetBackgroundColor(BACKGROUND); }
-        u8 str_length = 0;
-        char *str;
-        u8 byte_0 = program.data[i];
-
-        if((byte_0 >= 0x30 && byte_0 <= 0x39) ||
-           (byte_0 >= 0x41 && byte_0 <= 0x5B) ||
-           (byte_0 >= 0x61 && byte_0 <= 0x7A) ||
-           (byte_0 == 0x04)) {
-            str_length = 1;
-            ascii_storage[0] = byte_0;
-            str = (char*)ascii_storage;
+        if(program.opened_directory_view_top_token_index > program.opened_directory_token_index) {
+            program.opened_directory_view_top_token_index = program.opened_directory_token_index;
         }
-        
-        if(byte_0 == 0x2B) { str_length = 1; str = ","; }
-        if(byte_0 == 0x3A) { str_length = 1; str = "."; }
-        if(byte_0 == 0x3B) { str_length = 1; str = "E"; }
-        if(byte_0 == 0x3C) { str_length = 4; str = " or "; }
-        if(byte_0 == 0x3D) { str_length = 5; str = " xor "; }
-        if(byte_0 == 0x3E) { str_length = 1; str = ":"; }
-        if(byte_0 == 0x6A) { str_length = 1; str = "="; }
-        if(byte_0 == 0x71) { str_length = 1; str = "-"; }
-        if(byte_0 == 0xB5) { str_length = 4; str = "dim("; }
-        if(byte_0 == 0xCE) { str_length = 3; str = "If "; }
-        if(byte_0 == 0xD6) { str_length = 4; str = "Lbl "; }
-        if(byte_0 == 0xD7) { str_length = 5; str = "Goto "; }
-        if(byte_0 == 0xDE) { str_length = 5; str = "Disp "; }
-        if(byte_0 == 0xE6) { str_length = 5; str = "Menu("; }
-        if(byte_0 == 0x2A) { str_length = 1; str = "\""; }
-        if(byte_0 == 0xAC) { str_length = 1; str = "\x08"; }
-        if(byte_0 == 0x62) {
-            u8 byte_1 = program.data[i+1];
-            if(byte_1 == 0x02) { str_length = 1; str = "n"; }
-            if(byte_1 == 0x12) { str_length = 1; str = "r"; }
-            if(byte_1 == 0x13) { str_length = 3; str = "Med"; }
-            if(byte_1 == 0x16) { str_length = 1; str = "a"; }
-            if(byte_1 == 0x17) { str_length = 1; str = "b"; }
-            if(byte_1 == 0x18) { str_length = 1; str = "c"; }
-            if(byte_1 == 0x19) { str_length = 1; str = "d"; }
-            if(byte_1 == 0x1a) { str_length = 1; str = "e"; }
-            if(byte_1 == 0x22) { str_length = 1; str = "p"; }
-            if(byte_1 == 0x23) { str_length = 1; str = "z"; }
-            if(byte_1 == 0x24) { str_length = 1; str = "t"; }
-            if(byte_1 == 0x34) { str_length = 1; str = "s"; }
-        }
-        if(byte_0 == 0xEF) {
-            u8 byte_1 = program.data[i+1];
-            if(byte_1 == 0x38) { str_length = 7; str = "CLASSIC"; }
-        }
-        if(byte_0 == 0x5E) {
-            u8 byte_1 = program.data[i+1];
-            if(byte_1 == 0x80) { str_length = 1; str = "u"; }
-            if(byte_1 == 0x81) { str_length = 1; str = "v"; }
-            if(byte_1 == 0x82) { str_length = 1; str = "w"; }
-        }
-        if(byte_0 == 0xBB) {
-            u8 byte_1 = program.data[i+1];
-            if(byte_1 >= 0xB0 && byte_1 <= 0xBA) { str_length = 1; ascii_storage[0] = (byte_1 - 0xB0) + 'a'; str = (char*)ascii_storage; }
-            if(byte_1 >= 0xBC && byte_1 <= 0xCA) { str_length = 1; ascii_storage[0] = (byte_1 - 0xBC) + 'l'; str = (char*)ascii_storage; }
-        }
-        
-        i += get_token_size(i);
-        
-        bool break_line = false;
-        
-        if(selected && str_length == 0 && (byte_0 == LINEBREAK || byte_0 == SPACE)) {
-            s24 length_of_rect;
-            if(byte_0 == LINEBREAK) { length_of_rect = 4; }
-            if(byte_0 == SPACE) { length_of_rect = 8; }
-            gfx_SetColor(HIGHLIGHT);
-            gfx_FillRectangle(x,y,length_of_rect,8);
-            gfx_SetColor(FOREGROUND);
-        }
-        if(str_length > 0) {
-            s24 start = x;
-            s24 end = x + str_length*8;
-            s24 max_chars = (min(310, end) - start) / 8;
-            if(end > 310) {
-                break_line = true;
-            } else if(max_chars > 0) {
-                draw_string_max_chars(str,(u24)max_chars, (u24)x,y);
-            }
-        }
-        if(on_cursor && !program.cursor_selecting) {
-            u8 length_of_rect = 8;
-            if(str_length > 0) { length_of_rect = str_length*8; }
-            gfx_FillRectangle(x,y+9,length_of_rect,3);
-            gfx_FillRectangle(x-1,y,2,8);
-        }
-        if(str_length > 0) {
-            x += str_length*8;
-        }
-        if(byte_0 == 0x29) { x += 8; }
-        if(byte_0 == 0x3F) { break_line = true; }
-        
-        if(break_line) {
-            x = 5;
-            y += 10;
-            current_view_y += 1;
-            if(current_view_y <= program.linebreaks_count - 1) {
-                i = program.linebreaks[current_view_y] + 1;
-                gfx_FillRectangle(0,y,2,8);
+        u24 x = 5;
+        for(int i = 0; i < program.opened_directory->list_count; ++i) {
+            bool selected = (i == program.opened_directory_list_index);
+            u24 width = (FONT_WIDTH*cast(u24)program.opened_directory->lists[i].name_count);
+            if(!selected) {
+                fontlib_SetForegroundColor(FOREGROUND);
+                fontlib_SetBackgroundColor(BACKGROUND);
             } else {
+                fontlib_SetForegroundColor(BACKGROUND);
+                fontlib_SetBackgroundColor(FOREGROUND);
+                gfx_SetColor(FOREGROUND);
+                gfx_FillRectangle_NoClip(x - 2, 4, width + 4, FONT_HEIGHT + 2);
+            }
+            draw_string(program.opened_directory->lists[i].name, cast(u24)x, 5);
+            x += width + 5;
+        }
+        TokenList *list = program.opened_directory->lists + program.opened_directory_list_index;
+        u8 y = 15;
+        bool is_prgm_exec_override = get_is_prgm_exec_override();
+        for(u24 i = cast(u24)program.opened_directory_view_top_token_index; i < cast(u24)list->tokens_count && i < cast(u24)program.opened_directory_view_top_token_index + 22; ++i) {
+            u24 str_length = 0;
+            char *str;
+            if(is_prgm_exec_override) {
+                // NOTE: EXEC hard-coded override
+                str = (char*)os_programs[i].name;
+                str_length = 8;
+                for(int i = 0; i <= 7; ++i) {
+                    if(str[i] == 0) {
+                        str_length = (u24)i;
+                        break;
+                    }
+                }
+            } else {
+                u16 *ptr = list->tokens + i;
+                str = ti_GetTokenString(cast(void**)&ptr, null, &str_length);
+            }
+            
+            bool selected = (cast(s24)i == program.opened_directory_token_index);
+            u24 width = (str_length+2)*FONT_WIDTH;
+            if(!selected) {
+                fontlib_SetForegroundColor(FOREGROUND);
+                fontlib_SetBackgroundColor(BACKGROUND);
+            } else {
+                fontlib_SetForegroundColor(BACKGROUND);
+                fontlib_SetBackgroundColor(FOREGROUND);
+                gfx_SetColor(FOREGROUND);
+                gfx_FillRectangle_NoClip(4, y - 1, width + 2, FONT_HEIGHT + 2);
+            }
+            
+            char *key_table[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z" };
+            char *key = null;
+            if(i >= 0 && i <= ARRLEN(key_table) - 1) { key = key_table[i]; }
+            else { key = null; }
+            if(key) { draw_string(key, 5, y); }
+            if(is_prgm_exec_override) draw_string_max_chars(str, 8, 2*FONT_WIDTH+7, y);
+            else draw_string(str, 2*FONT_WIDTH+7, y);
+            y += FONT_HEIGHT + 2;
+        }
+        fontlib_SetForegroundColor(FOREGROUND);
+        fontlib_SetBackgroundColor(BACKGROUND);
+    } else {
+        static u8 ascii_storage[2];
+        ascii_storage[1] = 0;
+        s24 cursor_y = program.linebreaks_count - 1;
+        for(int i = 0; i <= program.linebreaks_count - 1; ++i) {
+            if(program.cursor <= program.linebreaks[i]) {
+                cursor_y = i - 1;
                 break;
             }
         }
-        if(y+10 >= 230)
+        
+        fontlib_SetForegroundColor(FOREGROUND);
+        fontlib_SetBackgroundColor(BACKGROUND);
+        fontlib_SetFirstPrintableCodePoint(0);
+        gfx_SetColor(FOREGROUND);
+        int x = 5;
+        u8 y = 5;
+        if(cursor_y < program.view_top_line) {
+            program.view_top_line = cursor_y;
+        }
+        if(cursor_y > program.view_top_line + 21) {
+            program.view_top_line = cursor_y - 21;
+        }
+        int first_token = program.linebreaks[program.view_top_line] + 1;
+        gfx_FillRectangle(0,y,2,FONT_HEIGHT);
+        s24 current_view_y = program.view_top_line;
+        Range selection;
+        if(program.cursor_selecting) selection = get_selecting_range();
+        for(int i = first_token; i < program.size;) {
+            bool on_cursor = (i == program.cursor);
+            bool selected = on_cursor;
+            if(program.cursor_selecting) {
+                selected = i >= selection.min && i <= selection.max;
+            }
+            if(selected) { fontlib_SetBackgroundColor(HIGHLIGHT); }
+            else { fontlib_SetBackgroundColor(BACKGROUND); }
+            u24 str_length = 0;
+            char *str;
+            u8 byte_0 = program.data[i];
+            u8 token_size = get_token_size(i);
+            
+            if(byte_0 != LINEBREAK && byte_0 != SPACE) {
+                u8 *ptr = program.data + i;
+                str = ti_GetTokenString(cast(void**)&ptr, null, &str_length);
+            }
+            
+            i += token_size;
+            
+            bool break_line = false;
+            
+            if(selected && str_length == 0 && (byte_0 == LINEBREAK || byte_0 == SPACE)) {
+                s24 length_of_rect;
+                if(byte_0 == LINEBREAK) { length_of_rect = FONT_WIDTH/2; }
+                if(byte_0 == SPACE) { length_of_rect = FONT_WIDTH; }
+                gfx_SetColor(HIGHLIGHT);
+                gfx_FillRectangle(x,y,length_of_rect,FONT_HEIGHT);
+                gfx_SetColor(FOREGROUND);
+            }
+            if(str_length > 0) {
+                s24 start = x;
+                s24 end = x + cast(s24)str_length*FONT_WIDTH;
+                s24 max_chars = (min(310, end) - start) / FONT_WIDTH;
+                if(end > 310) {
+                    break_line = true;
+                }
+                if(max_chars > 0) {
+                    draw_string_max_chars(str,(u24)max_chars, (u24)x,y);
+                }
+            }
+            if(on_cursor && !program.cursor_selecting) {
+                u8 length_of_rect = FONT_WIDTH;
+                if(str_length > 0) { length_of_rect = cast(u8)str_length*FONT_WIDTH; }
+                gfx_FillRectangle(x,y+FONT_HEIGHT+1,length_of_rect,3);
+                gfx_FillRectangle(x-1,y,2,FONT_HEIGHT);
+            }
+            if(str_length > 0) {
+                x += str_length*FONT_WIDTH;
+            }
+            if(byte_0 == SPACE) { x += FONT_WIDTH; }
+            if(byte_0 == 0x3F) { break_line = true; }
+            
+            if(break_line) {
+                x = 5;
+                y += FONT_HEIGHT + 2;
+                current_view_y += 1;
+                if(current_view_y <= program.linebreaks_count - 1) {
+                    i = program.linebreaks[current_view_y] + 1;
+                    gfx_FillRectangle(0,y,2,FONT_HEIGHT);
+                } else {
+                    break;
+                }
+            }
+            if(y+10 >= 230)
+            {
+                break;
+            }
+        }
+        if(program.cursor >= program.size)
         {
-            break;
+            gfx_FillRectangle(x,y+FONT_HEIGHT+1,FONT_WIDTH,3);
+            gfx_FillRectangle(x-1,y,2,FONT_HEIGHT);
+        }
+        
+        u8 undo_bar_height = (u8)min(240, 3*program.undo_buffer.delta_count);
+        gfx_FillRectangle(320-2,240-undo_bar_height,2,undo_bar_height);
+        u8 redo_bar_height = (u8)min(240, 3*program.redo_buffer.delta_count);
+        gfx_FillRectangle(320-4,240-redo_bar_height,2,redo_bar_height);
+        
+        //log("%2x %2x [%2x] %2x %2x\n", program.data[program.cursor - 2], program.data[program.cursor - 1], program.data[program.cursor], program.data[program.cursor + 1], program.data[program.cursor+2]);
+    }
+    
+    fontlib_SetForegroundColor(FOREGROUND);
+    fontlib_SetBackgroundColor(BACKGROUND);
+    char *cursor_glyph = null;
+    if(program.cursor_mode == CursorMode_Second) {
+        cursor_glyph = "\xE1";
+    } else if(program.cursor_mode == CursorMode_Alpha) {
+        if(program.alpha_is_lowercase) {
+            cursor_glyph = "\xE3";
+        } else {
+            cursor_glyph = "\xE2";
         }
     }
-    if(program.cursor >= program.size)
-    {
-        gfx_FillRectangle(x,y+9,8,3);
-        gfx_FillRectangle(x-1,y,2,8);
+    if(cursor_glyph) {
+        draw_string(cursor_glyph, 320-(FONT_WIDTH+2), 2);
     }
-    
-    u8 undo_bar_height = (u8)min(240, 3*program.undo_buffer.delta_count);
-    gfx_FillRectangle(320-2,240-undo_bar_height,2,undo_bar_height);
-    u8 redo_bar_height = (u8)min(240, 3*program.redo_buffer.delta_count);
-    gfx_FillRectangle(320-4,240-redo_bar_height,2,redo_bar_height);
-    
-    //log("%2x %2x [%2x] %2x %2x\n", program.data[program.cursor - 2], program.data[program.cursor - 1], program.data[program.cursor], program.data[program.cursor + 1], program.data[program.cursor+2]);
 }
 
 #if DEBUG
