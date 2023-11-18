@@ -5,7 +5,7 @@
 NAME ?= AETHER
 ICON ?= icon.png
 DESCRIPTION ?= "Aether TI-BASIC Editor by Vital Ash"
-COMPRESSED ?= NO
+COMPRESSED ?= YES
 ARCHIVED ?= NO
 
 CFLAGS ?= -Wall -Wextra -Wconversion -Oz
