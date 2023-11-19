@@ -1193,11 +1193,6 @@ void load_program(char *name) {
 void save_program(bool are_we_exiting_so_we_should_do_a_final_archiving_of_the_variable) {
     assert(program.program_loaded, "Program should be loaded");
     if(program.program_loaded) {
-        // NOTE: Check if we have room to write this to ram.
-        // I do this by creating a dummy program and seeing if a write of that size succeeds.
-        // (we don't try this on the original program because ti_OpenVar("w") deletes the variable,
-        // so a failed write will be catastrophic.
-
         u8 handle = ti_OpenVar((char*)program.program_name, "r", OS_TYPE_PRGM);
         u16 space_that_will_be_freed = 0;
         if(handle) {

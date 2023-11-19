@@ -11,6 +11,7 @@ obj/src/main.c.bc: src\main.c \
   E:\newgames\calculator\c\CEdev\include\ti\real.h \
   E:\newgames\calculator\c\CEdev\include\ti\screen.h \
   E:\newgames\calculator\c\CEdev\include\ti\ui.h \
+  E:\newgames\calculator\c\CEdev\include\ti\tokens.h \
   E:\newgames\calculator\c\CEdev\include\keypadc.h \
   E:\newgames\calculator\c\CEdev\include\graphx.h \
   E:\newgames\calculator\c\CEdev\include\fontlibc.h \

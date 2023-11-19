@@ -1,0 +1,13 @@
+*.map
+*.src
+*.obj
+*.sublime-project
+*.sublime-workspace
+*.debug
+*.map
+*.bin
+obj
+tests
+media
+
+test.asm
