@@ -466,7 +466,6 @@ Delta* push_delta(DeltaCollection *collection, void *data, u24 data_size, u24 pu
         while(collection->data_size + push_size > ARRLEN(collection->data)) {
             u24 to_free = size_of_delta((Delta*)&collection->data[0]);
             u24 remaining = collection->data_size - to_free;
-            log("Freeing %d so we can have %d remaining to push our %d\n",to_free,remaining,push_size); 
             copy(collection->data + to_free, collection->data, (s24)remaining);
             collection->data_size = remaining;
             collection->delta_count -= 1;
@@ -1551,7 +1550,6 @@ void update(void) {
             load_program(stored_name);
         } else if(key_down[1] & kb_Mode) {
             u8 exists = ti_OpenVar((char*)editor.settings.last_editing_program, "r", OS_TYPE_PRGM);
-            log("%s\n yaga",editor.settings.last_editing_program);
             if(exists != 0) {
                 ti_Close(exists);
                 load_program((char*)editor.settings.last_editing_program);
