@@ -1,5 +1,51 @@
+// TODO: LARGE file support (~65505 or OS_VAR_MAX_SIZE)
+// Few possible ways of doing this:
+// - Get a contiguous piece of memory 65505 bytes large.
+//   One candidate for this is reposessing GFX's draw-buffer,
+//   and changing our renderer to accomodate not being double-buffered.
+//   Another candidate is "os_MemChk" but this seems to usually be a value less than 65505 on a healthy calculator.
+//   and presumably autosave must be disabled as it may be using that section of memory.
+//   
+// - Page memory in as we need it, and operate on one section of the file at a time
+//   (ti_OpenVar("a") may let me overwrite specific parts of the file at once...)
+//   
+//   I speculate I would want to try overlapping pages like this
+//   +-------------------+
+//   |  SECTION 1 (0-32k)|  
+//   |+------------------+-+
+//   ++------------------+ |
+//    | SECTION 2 (16-48K) |
+//   ++------------------+ |
+//   |+------------------+-+
+//   | SECTION 3 (32-64k)|
+//   +-------------------+
+//   Because then we can ensure operating on one at a time.
+//   So there need not be a situation where we need to operate on two
+//   sections at once on a boundary.
+//   But I need to actually experiment with this to see what's actually good.
+
+// TODO: Some performance concerns
+// - Rendering a whole screen of glyphs takes a very long time.
+//   May be good to have a partial-renderer, or see if a hand-rolled font renderer
+//   will be faster.
+// - Indentation slows down token insertion/deletion at the top of a big project file
+//   And there's some slow-down from make_room_for_tokens's copy.
+//   Perhaps unrolling that copy loops would help.
+
+// TODO: Maybe it'd be cool if you could goto string. Like
+// if you put a comment on a line starting with `"` you could 
+// go to those commented lines quickly
+// TODO: Quick way to re-open-last-state in editor (especially while os_RunPrgm is temporarily disabled)
+// TODO: User-space favorite tokens from catalog
+// TODO: hotkey ideas
+// - Delete from cursor to end of line
+// - Delete from cursor to start of line
+// - Goto next/previous occurance of letter in line (like VI's f/t/F/T)
+// - Go to top/bottom of screen without scrolling (2nd -> up/down)
+
 #include <fileioc.h>
 #include <ti/screen.h>
+#include <ti/tokens.h>
 #include <keypadc.h>
 #include <graphx.h>
 #include <fontlibc.h>
@@ -28,7 +74,7 @@ int run_prgm_callback(void *data_, int retval);
 void update(void);
 void render(void);
 void load_program(char *name);
-void save_program(void);
+void save_program(bool are_we_exiting_so_we_should_do_a_final_archiving_of_the_variable);
 void draw_string(char* str, u24 x, u8 y);
 void draw_string_max_chars(char* str, u24 max, u24 x, u8 y);
 void update_input(void);
@@ -89,10 +135,18 @@ const fontlib_font_t *editor_font = (fontlib_font_t*)editor_font_data;
 
 #define ARRLEN(var) (sizeof((var)) / sizeof((var)[0]))
 
+#define change_indentation_based_on_byte(indentation, byte) \
+    if(byte == 0xCF || (byte >= 0xD1 && byte <= 0xD3)) { \
+        indentation += 1; \
+    } else if(byte == 0xD4) { \
+        indentation -= 1; \
+        if(indentation < 0) { indentation = 0; } \
+    }
+
 typedef struct TokenList {
     char *name;
     s16 name_count;
-    u16 *tokens;
+    const u16 *tokens;
     s16  tokens_count;
 } TokenList;
 
@@ -100,35 +154,6 @@ typedef struct TokenDirectory {
     s8 list_count;
     TokenList lists[27];
 } TokenDirectory;
-
-u16 CTRL[] = { 0xCE, 0xCF, 0xD0, 0xD3, 0xD1, 0xD2, 0xD4, 0xD8, 0xD6,
-               0xD7, 0x96EF, 0xDA, 0xDB, 0xE6, 0x5F, 0xD5, 0xD9, 0x54BB, 0x45BB,
-               0x65EF, 0x11EF, 0x12EF };
-u16 IO[]   = { 0xDC, 0xDD, 0xDE, 0xDF, 0xE5, 0xE0, 0xAD, 0xE1, 0xFB,
-               0x53BB, 0xE8, 0xE7, 0x98EF, 0x2ABB, 0x97EF, 0x56BB };
-u16 COLOR[] = { 0x41EF, 0x42EF, 0x43EF, 0x44EF, 0x45EF, 0x46EF, 0x47EF, 0x48EF, 0x49EF, 0x4AEF,
-                0x4BEF, 0x4CEF, 0x4DEF, 0x4EEF, 0x4FEF };
-
-u16 TEST[] = { 0x6A, 0x6F, 0x6C, 0x6C, 0x6B, 0x6D };
-u16 LOGIC[] = { 0x40, 0x3C, 0x3D, 0xB8 };
-
-u16 STRINGS[] = { 0x00AA, 0x01AA, 0x02AA, 0x03AA, 0x04AA, 0x05AA, 0x06AA, 0x07AA, 0x08AA, 0x09AA };
-u16 GDBS[] = { 0x0061, 0x0161, 0x0261, 0x0361, 0x0461, 0x0561, 0x0661, 0x0761, 0x0861, 0x0961 };
-u16 PICTURES[] = { 0x0060, 0x0160, 0x0260, 0x0360, 0x0460, 0x0560, 0x0660, 0x0760, 0x0860, 0x0960 };
-u16 EQUATIONS[] = { 0x105E, 0x115E, 0x125E, 0x135E, 0x145E, 0x155E, 0x165E, 0x175E, 0x185E, 0x195E,
-                    0x205E, 0x215E, 0x225E, 0x235E, 0x245E, 0x255E, 0x265E, 0x275E, 0x285E, 0x295E, 0x2A5E, 0x2B5E,
-                    0x405E, 0x415E, 0x425E, 0x435E, 0x445E, 0x455E,
-                    0x805E, 0x815E, 0x825E };
-
-u16 MATRIX_NAMES[] = { 0x005C, 0x015C, 0x025C, 0x035C, 0x045C, 0x055C, 0x065C, 0x075C, 0x085C, 0x095C };
-u16 MATRIX_MATH[] = { 0xB3, 0x0E, 0xB5, 0xE2, 0xB4, 0x20, 0x14, 0x39BB, 0x3ABB, 0x29BB, 0x2DBB, 0x2EBB,
-                      0x15, 0x16, 0x17, 0x18 };
-
-u16 MATH[] = { 0x03, 0x02, 0x0F, 0xBD, 0xF1, 0x27, 0x28, 0x25, 0x24, 0x33EF, 0x34EF, 0xA6EF };
-u16 NUM[] = { 0xB2, 0x12, 0xB9, 0xBA, 0xB1, 0x1A, 0x19, 0x08, 0x09, 0x32EF };
-u16 COMPLEX[] = { 0x25BB, 0x26BB, 0x27BB, 0x28BB, 0xB2, 0x2FBB, 0x30BB };
-u16 PROBABILITY[] = { 0xAB, 0x94, 0x95, 0x2D, 0x0ABB, 0x1FBB, 0x0BBB, 0x35EF };
-u16 FRACTION[] = { 0x30EF, 0x31EF, 0x39EF, 0x38EF };
 
 
 /*
@@ -204,35 +229,86 @@ copy(str);
 // var str = ""; for(var i in arrs) { var x = String.fromCharCode(parseInt(i) + "A".charCodeAt(0)); str += "u16 ALL_" + x + "[] = {"; for(var j in arrs[i]) { str += "0x" + arrs[i][j].n.toString(16).toUpperCase() + ","; } str += "};\n"; } copy(str); console.log(str);
 */
 
-u16 ALL_A[] = {0x1662,0xB0BB,0x41,0x4FBB,0x40,0xB2,0x6ABB,0x72,0x3AEF,0x28BB,0x59BB,0x87E,0x68BB,0x97E,0x6BBB,0x14,0x6CBB,0x68EF,0x7AEF,};
-u16 ALL_B[] = {0x1762,0x42,0xB1BB,0x2BB,0x41EF,0x43EF,0x47EF,0x5,0x16BB,0x15BB,0x6CEF,0x5BEF,0x64EF,};
-u16 ALL_C[] = {0x1862,0x43,0xB2BB,0x3163,0xC4,0x25BB,0xCA,0xA5,0x93EF,0x29BB,0x37EF,0xC5,0x10EF,0xE1,0x85,0x47E,0xA1EF,0xFA,0x2E,0xFEF,0xFB,0xCB,0x2EF,0x57E,0xA2EF,0x67E,0x6DBB,0x52BB,0x57BB,0x7BEF,0x69EF,};
-u16 ALL_D[] = {0x1962,0x44,0xB3BB,0x2762,0x7BB,0x3BEF,0xB5,0xDB,0xB3,0x77E,0xDE,0xA9,0x2,0x65,0x1,0x54BB,0x6EF,0x75EF,0xA8,0x4FEF,0x7D,0xE5,0xDF,0x7C,0x66BB,0x6AEF,0x67BB,0x6BEF,};
-u16 ALL_E[] = {0x1A62,0x45,0x3B,0x31BB,0xB4BB,0xBF,0xD4,0x68,0x98EF,0xD0,0x2ABB,0x6BB,0xF5,0x50BB,0x12EF,0x3A62,0x51BB,0x3C62,0x3B62,0x55BB,0x9EEF,};
-u16 ALL_F[] = {0x2662,0x46,0xB5BB,0xAFBB,0x2F63,0x61,0x161,0x261,0x361,0x461,0x561,0x661,0x761,0x861,0x961,0x73,0xD3,0x14BB,0x3CEF,0x1EBB,0xE2,0x27,0x76,0x28,0x96,0x75,0x97,0x69,0xBA,0x24,0xA7E,0x3,0xB7E,0x3762,0x3962,0x3862,0x3DEF,};
-u16 ALL_G[] = {0x47,0xB6BB,0x64BB,0x9BB,0xE8,0x4EEF,0xD7,0x45EF,0xAD,0x53BB,0x9EF,0xAEF,0x5AEF,0xCEF,0xDEF,0x7EF,0x8EF,0x1ABB,0x19BB,0x65EF,0x45BB,0xCEBB,};
-u16 ALL_H[] = {0x48,0xB7BB,0x74,0xFC,0xA6,};
-u16 ALL_I[] = {0x2C63,0x49,0x2C,0xB8BB,0xCE,0xDA,0xB1,0x1BB,0x27BB,0x13EF,0x50EF,0x51EF,0x52EF,0x53EF,0x54EF,0x55EF,0x56EF,0x57EF,0x58EF,0x59EF,0xB9,0x4BB,0xDC,0x11BB,0x95EF,0xB4,0xFBB,0xEEF,0x7B,0x7A,0xA0EF,0xA4EF,};
-u16 ALL_J[] = {0x4A,0xB9BB,};
-u16 ALL_K[] = {0x4B,0xBABB,};
-u16 ALL_L[] = {0x5D,0x15D,0x25D,0x35D,0x45D,0x55D,0x4C,0xBCBB,0xBE,0xD6,0x8BB,0xC0,0x9C,0x92EF,0xF6,0x3262,0x2CBB,0x2BBB,0x49EF,0x4CEF,0xC7E,0x34EF,0xD7E,0x33BB,0xF4,0xFF,0x15EF,0x3ABB,0x34BB,};
-u16 ALL_M[] = {0x4D,0xBDBB,0x1362,0x1A,0x19,0x21,0xE6,0x862,0xA62,0x962,0xB62,0xF8,0x1F,0x44EF,0x4DEF,0x16EF,0x36EF,0x5ABB,0x39BB,0x1EEF,};
-u16 ALL_N[] = {0x2B63,0x262,0x2162,0x2D62,0x3062,0x4E,0xBEBB,0x38EF,0x95,0x94,0xB8,0xBB,0x1F63,0x1D63,0x48EF,0x5BB,0x25,0x66,0x3F,0x10BB,0x1BBB,0x5BBB,};
-u16 ALL_O[] = {0x4F,0xBFBB,0x3C,0x46EF,0xE0,0x11EF,};
-u16 ALL_P[] = {0x2262,0x2862,0x2962,0x2A62,0x50,0xC0BB,0x2D63,0x3063,0xADBB,0x60,0x160,0x260,0x360,0x460,0x560,0x660,0x760,0x860,0x960,0x2E63,0xB7,0x5F,0xEC,0xED,0xEE,0x9E,0x77,0x78,0xD8,0x9F,0x3BB,0xA1,0x4BBB,0x4CBB,0xA2,0x1D,0x1E,0xF7,0xDD,0x27E,0xE9,0x13,0x79EF,0xA0,0x30BB,0xEA,0x3463,0x44BB,0x43BB,0xA3,0xA6EF,0x1B63,0x3EBB,0x3FBB,0x18BB,0x17BB,0x91,0xA3EF,};
-u16 ALL_Q[] = {0x1462,0x1562,0x51,0xC1BB,0xF9,0x2F,0xA5EF,0x81EF,};
-u16 ALL_R[] = {0x1262,0x3562,0x3662,0x405E,0x415E,0x425E,0x435E,0x445E,0x455E,0x52,0xA,0xC2BB,0x42EF,0x2DBB,0x18,0x17,0x16,0x26BB,0x4DBB,0xAB,0x2EBB,0x20,0x162,0x94EF,0x12,0x64,0x37E,0x4EBB,0xD2,0x1B,0xD5,0xBBB,0x2FBB,0xABB,0x1C,0x15,0xD0BB,0x1FBB,0x9B,0x99,0x32EF,0x35EF,};
-u16 ALL_S[] = {0x3462,0x53,0xC3BB,0x2C62,0x2F62,0x67,0x23,0x79,0xC2,0xCBB,0xB6,0xAA,0x1AA,0x2AA,0x3AA,0x4AA,0x5AA,0x6AA,0x7AA,0x8AA,0x9AA,0x3162,0xE7,0xC8,0x90EF,0x91EF,0x8FEF,0xD9,0xA4,0x22,0xE3,0x17E,0xE4,0x38BB,0x36BB,0x58BB,0x32BB,0xDBB,0xC3,0xFE,0x1EF,0x37BB,0xC9,0x9A,0x98,0x3EF,0x49BB,0x4EF,0x42BB,0xBEF,0x35BB,0x47BB,0x46BB,0x3DBB,0x7E,0x4ABB,0x56BB,};
-u16 ALL_T[] = {0x2462,0x54,0xE,0xC4BB,0xDFBB,0x2163,0xC6,0x12BB,0xCC,0x1CBB,0xF7E,0xCF,0x74EF,0xE63,0xF63,0x21BB,0x93,0x23BB,0x84,0xEF,0x2263,0x24BB,0x3CBB,0x22BB,0x20BB,0xC7,0xA7,0x5EF,0x40BB,0xCD,0x1A63,0x2A63,0x97EF,0x3863,0x48BB,0x67EF,0x73EF,};
-u16 ALL_U[] = {0x805E,0x55,0xC5BB,0x663,0x82EF,0x85EF,0x88EF,0x8BEF,0x39EF,0x463,0x3362,0x107E,0x127E,0x9FEF,0x69BB,};
-u16 ALL_V[] = {0x815E,0x56,0xC6BB,0x763,0x83EF,0x86EF,0x89EF,0x8CEF,0x563,0x117E,0xEBB,0x9D,0xF3,0xF2,};
-u16 ALL_W[] = {0x825E,0x57,0xC7BB,0x84EF,0x87EF,0x8AEF,0x8DEF,0xE7E,0x96EF,0xD1,0x4BEF,0x3263,};
-u16 ALL_X[] = {0x2562,0x2663,0x362,0x462,0x562,0x762,0x1B62,0x1C62,0x1D62,0x2B62,0x2E62,0x58,0xF0BB,0xC8BB,0xDEBB,0x662,0x205E,0x225E,0x245E,0x265E,0x285E,0x2A5E,0x1162,0x3D,0x263,0xA63,0xB63,0x3663,0x2863,0x13BB,0x1DBB,0xFD,};
-u16 ALL_Y[] = {0x2763,0xC62,0xD62,0xE62,0x1062,0x1E62,0x1F62,0x2062,0x105E,0x115E,0x125E,0x135E,0x145E,0x155E,0x165E,0x175E,0x185E,0x195E,0x59,0xC9BB,0xF62,0x215E,0x235E,0x255E,0x275E,0x295E,0x2B5E,0x363,0xC63,0xD63,0x2963,0x4AEF,};
-u16 ALL_Z[] = {0x2362,0x5A,0xCABB,0x1663,0x1763,0x88,0x18EF,0x19EF,0x1AEF,0x1BEF,0x1CEF,0x1DEF,0x2063,0x1E63,0x87,0x1863,0x1963,0x63,0x163,0x2563,0x1263,0x1463,0x1363,0x1563,0x3BBB,0x3763,0x89,0x863,0x963,0x3363,0x2463,0x90,0x65BB,0x8B,0x92,0x8A,0x8E,0x8C,0x8F,0x86,0x17EF,0x41BB,0x3563,0x8D,0x1C63,};
-u16 ALL_SYMBOLS[] = {0x1063,0x1163,0x2363,0x5C,0x15C,0x25C,0x35C,0x45C,0x55C,0x65C,0x75C,0x85C,0x95C,0x62,0x10,0x30,0x70,0x11,0x31,0x71,0x32,0x33,0x4,0x34,0x35,0x6,0x36,0x7,0x37,0x8,0x38,0x9,0x29,0x39,0x2A,0x3A,0x6A,0xB,0x2B,0x5B,0x6B,0xC,0x6C,0xD,0x2D,0x6D,0x3E,0x6E,0xF,0x6F,0x7F,0x80,0x81,0xB0,0xF0,0xC1,0xF1,0x82,0x83,0xEB,0xAC,0xBC,0xBD,0xAE,0xAF,0x70BB,0x80BB,0x90BB,0xA0BB,0xE0BB,0x71BB,0x81BB,0x91BB,0xA1BB,0xD1BB,0xE1BB,0xF1BB,0x72BB,0x82BB,0x92BB,0xA2BB,0xD2BB,0xE2BB,0xF2BB,0x73BB,0x83BB,0x93BB,0xA3BB,0xD3BB,0xE3BB,0xF3BB,0x74BB,0x84BB,0x94BB,0xA4BB,0xD4BB,0xE4BB,0xF4BB,0x75BB,0x85BB,0x95BB,0xA5BB,0xD5BB,0xE5BB,0xF5BB,0x76BB,0x86BB,0x96BB,0xA6BB,0xD6BB,0xE6BB,0xF6BB,0x77BB,0x87BB,0x97BB,0xA7BB,0xD7BB,0xE7BB,0x78BB,0x88BB,0x98BB,0xA8BB,0xD8BB,0xE8BB,0x79BB,0x89BB,0x99BB,0xA9BB,0xD9BB,0xE9BB,0x7ABB,0x8ABB,0x9ABB,0xDABB,0xEABB,0x7BBB,0x8BBB,0x9BBB,0xABBB,0xCBBB,0xDBBB,0xEBBB,0x7CBB,0x8CBB,0x9CBB,0xACBB,0xCCBB,0xDCBB,0xECBB,0x7DBB,0x8DBB,0x9DBB,0xCDBB,0xDDBB,0xEDBB,0x6EBB,0x8EBB,0x9EBB,0xAEBB,0xEEBB,0x6FBB,0x7FBB,0x8FBB,0x9FBB,0xCFBB};
+// NOTE: The full catalog and each section takes up 2210 bytes total
 
+const u16 ALL_A[] = {0x1662,0xB0BB,0x41,0x4FBB,0x40,0xB2,0x6ABB,0x72,0x3AEF,0x28BB,0x59BB,0x87E,0x68BB,0x97E,0x6BBB,0x14,0x6CBB,0x68EF,0x7AEF,};
+const u16 ALL_B[] = {0x1762,0x42,0xB1BB,0x2BB,0x41EF,0x43EF,0x47EF,0x5,0x16BB,0x15BB,0x6CEF,0x5BEF,0x64EF,};
+const u16 ALL_C[] = {0x1862,0x43,0xB2BB,0x3163,0xC4,0x25BB,0xCA,0xA5,0x93EF,0x29BB,0x37EF,0xC5,0x10EF,0xE1,0x85,0x47E,0xA1EF,0xFA,0x2E,0xFEF,0xFB,0xCB,0x2EF,0x57E,0xA2EF,0x67E,0x6DBB,0x52BB,0x57BB,0x7BEF,0x69EF,};
+const u16 ALL_D[] = {0x1962,0x44,0xB3BB,0x2762,0x7BB,0x3BEF,0xB5,0xDB,0xB3,0x77E,0xDE,0xA9,0x2,0x65,0x1,0x54BB,0x6EF,0x75EF,0xA8,0x4FEF,0x7D,0xE5,0xDF,0x7C,0x66BB,0x6AEF,0x67BB,0x6BEF,};
+const u16 ALL_E[] = {0x1A62,0x45,0x3B,0x31BB,0xB4BB,0xBF,0xD4,0x68,0x98EF,0xD0,0x2ABB,0x6BB,0xF5,0x50BB,0x12EF,0x3A62,0x51BB,0x3C62,0x3B62,0x55BB,0x9EEF,};
+const u16 ALL_F[] = {0x2662,0x46,0xB5BB,0xAFBB,0x2F63,0x61,0x161,0x261,0x361,0x461,0x561,0x661,0x761,0x861,0x961,0x73,0xD3,0x14BB,0x3CEF,0x1EBB,0xE2,0x27,0x76,0x28,0x96,0x75,0x97,0x69,0xBA,0x24,0xA7E,0x3,0xB7E,0x3762,0x3962,0x3862,0x3DEF,};
+const u16 ALL_G[] = {0x47,0xB6BB,0x64BB,0x9BB,0xE8,0x4EEF,0xD7,0x45EF,0xAD,0x53BB,0x9EF,0xAEF,0x5AEF,0xCEF,0xDEF,0x7EF,0x8EF,0x1ABB,0x19BB,0x65EF,0x45BB,0xCEBB,};
+const u16 ALL_H[] = {0x48,0xB7BB,0x74,0xFC,0xA6,};
+const u16 ALL_I[] = {0x2C63,0x49,0x2C,0xB8BB,0xCE,0xDA,0xB1,0x1BB,0x27BB,0x13EF,0x50EF,0x51EF,0x52EF,0x53EF,0x54EF,0x55EF,0x56EF,0x57EF,0x58EF,0x59EF,0xB9,0x4BB,0xDC,0x11BB,0x95EF,0xB4,0xFBB,0xEEF,0x7B,0x7A,0xA0EF,0xA4EF,};
+const u16 ALL_J[] = {0x4A,0xB9BB,};
+const u16 ALL_K[] = {0x4B,0xBABB,};
+const u16 ALL_L[] = {0x5D,0x15D,0x25D,0x35D,0x45D,0x55D,0x4C,0xBCBB,0xBE,0xD6,0x8BB,0xC0,0x9C,0x92EF,0xF6,0x3262,0x2CBB,0x2BBB,0x49EF,0x4CEF,0xC7E,0x34EF,0xD7E,0x33BB,0xF4,0xFF,0x15EF,0x3ABB,0x34BB,};
+const u16 ALL_M[] = {0x4D,0xBDBB,0x1362,0x1A,0x19,0x21,0xE6,0x862,0xA62,0x962,0xB62,0xF8,0x1F,0x44EF,0x4DEF,0x16EF,0x36EF,0x5ABB,0x39BB,0x1EEF,};
+const u16 ALL_N[] = {0x2B63,0x262,0x2162,0x2D62,0x3062,0x4E,0xBEBB,0x38EF,0x95,0x94,0xB8,0xBB,0x1F63,0x1D63,0x48EF,0x5BB,0x25,0x66,0x3F,0x10BB,0x1BBB,0x5BBB,};
+const u16 ALL_O[] = {0x4F,0xBFBB,0x3C,0x46EF,0xE0,0x11EF,};
+const u16 ALL_P[] = {0x2262,0x2862,0x2962,0x2A62,0x50,0xC0BB,0x2D63,0x3063,0xADBB,0x60,0x160,0x260,0x360,0x460,0x560,0x660,0x760,0x860,0x960,0x2E63,0xB7,0x5F,0xEC,0xED,0xEE,0x9E,0x77,0x78,0xD8,0x9F,0x3BB,0xA1,0x4BBB,0x4CBB,0xA2,0x1D,0x1E,0xF7,0xDD,0x27E,0xE9,0x13,0x79EF,0xA0,0x30BB,0xEA,0x3463,0x44BB,0x43BB,0xA3,0xA6EF,0x1B63,0x3EBB,0x3FBB,0x18BB,0x17BB,0x91,0xA3EF,};
+const u16 ALL_Q[] = {0x1462,0x1562,0x51,0xC1BB,0xF9,0x2F,0xA5EF,0x81EF,};
+const u16 ALL_R[] = {0x1262,0x3562,0x3662,0x405E,0x415E,0x425E,0x435E,0x445E,0x455E,0x52,0xA,0xC2BB,0x42EF,0x2DBB,0x18,0x17,0x16,0x26BB,0x4DBB,0xAB,0x2EBB,0x20,0x162,0x94EF,0x12,0x64,0x37E,0x4EBB,0xD2,0x1B,0xD5,0xBBB,0x2FBB,0xABB,0x1C,0x15,0xD0BB,0x1FBB,0x9B,0x99,0x32EF,0x35EF,};
+const u16 ALL_S[] = {0x3462,0x53,0xC3BB,0x2C62,0x2F62,0x67,0x23,0x79,0xC2,0xCBB,0xB6,0xAA,0x1AA,0x2AA,0x3AA,0x4AA,0x5AA,0x6AA,0x7AA,0x8AA,0x9AA,0x3162,0xE7,0xC8,0x90EF,0x91EF,0x8FEF,0xD9,0xA4,0x22,0xE3,0x17E,0xE4,0x38BB,0x36BB,0x58BB,0x32BB,0xDBB,0xC3,0xFE,0x1EF,0x37BB,0xC9,0x9A,0x98,0x3EF,0x49BB,0x4EF,0x42BB,0xBEF,0x35BB,0x47BB,0x46BB,0x3DBB,0x7E,0x4ABB,0x56BB,};
+const u16 ALL_T[] = {0x2462,0x54,0xE,0xC4BB,0xDFBB,0x2163,0xC6,0x12BB,0xCC,0x1CBB,0xF7E,0xCF,0x74EF,0xE63,0xF63,0x21BB,0x93,0x23BB,0x84,0xEF,0x2263,0x24BB,0x3CBB,0x22BB,0x20BB,0xC7,0xA7,0x5EF,0x40BB,0xCD,0x1A63,0x2A63,0x97EF,0x3863,0x48BB,0x67EF,0x73EF,};
+const u16 ALL_U[] = {0x805E,0x55,0xC5BB,0x663,0x82EF,0x85EF,0x88EF,0x8BEF,0x39EF,0x463,0x3362,0x107E,0x127E,0x9FEF,0x69BB,};
+const u16 ALL_V[] = {0x815E,0x56,0xC6BB,0x763,0x83EF,0x86EF,0x89EF,0x8CEF,0x563,0x117E,0xEBB,0x9D,0xF3,0xF2,};
+const u16 ALL_W[] = {0x825E,0x57,0xC7BB,0x84EF,0x87EF,0x8AEF,0x8DEF,0xE7E,0x96EF,0xD1,0x4BEF,0x3263,};
+const u16 ALL_X[] = {0x2562,0x2663,0x362,0x462,0x562,0x762,0x1B62,0x1C62,0x1D62,0x2B62,0x2E62,0x58,0xF0BB,0xC8BB,0xDEBB,0x662,0x205E,0x225E,0x245E,0x265E,0x285E,0x2A5E,0x1162,0x3D,0x263,0xA63,0xB63,0x3663,0x2863,0x13BB,0x1DBB,0xFD,};
+const u16 ALL_Y[] = {0x2763,0xC62,0xD62,0xE62,0x1062,0x1E62,0x1F62,0x2062,0x105E,0x115E,0x125E,0x135E,0x145E,0x155E,0x165E,0x175E,0x185E,0x195E,0x59,0xC9BB,0xF62,0x215E,0x235E,0x255E,0x275E,0x295E,0x2B5E,0x363,0xC63,0xD63,0x2963,0x4AEF,};
+const u16 ALL_Z[] = {0x2362,0x5A,0xCABB,0x1663,0x1763,0x88,0x18EF,0x19EF,0x1AEF,0x1BEF,0x1CEF,0x1DEF,0x2063,0x1E63,0x87,0x1863,0x1963,0x63,0x163,0x2563,0x1263,0x1463,0x1363,0x1563,0x3BBB,0x3763,0x89,0x863,0x963,0x3363,0x2463,0x90,0x65BB,0x8B,0x92,0x8A,0x8E,0x8C,0x8F,0x86,0x17EF,0x41BB,0x3563,0x8D,0x1C63,};
+const u16 ALL_SYMBOLS[] = {0x1063,0x1163,0x2363,0x5C,0x15C,0x25C,0x35C,0x45C,0x55C,0x65C,0x75C,0x85C,0x95C,0x62,0x10,0x30,0x70,0x11,0x31,0x71,0x32,0x33,0x4,0x34,0x35,0x6,0x36,0x7,0x37,0x8,0x38,0x9,0x29,0x39,0x2A,0x3A,0x6A,0xB,0x2B,0x5B,0x6B,0xC,0x6C,0xD,0x2D,0x6D,0x3E,0x6E,0xF,0x6F,0x7F,0x80,0x81,0xB0,0xF0,0xC1,0xF1,0x82,0x83,0xEB,0xAC,0xBC,0xBD,0xAE,0xAF,0x70BB,0x80BB,0x90BB,0xA0BB,0xE0BB,0x71BB,0x81BB,0x91BB,0xA1BB,0xD1BB,0xE1BB,0xF1BB,0x72BB,0x82BB,0x92BB,0xA2BB,0xD2BB,0xE2BB,0xF2BB,0x73BB,0x83BB,0x93BB,0xA3BB,0xD3BB,0xE3BB,0xF3BB,0x74BB,0x84BB,0x94BB,0xA4BB,0xD4BB,0xE4BB,0xF4BB,0x75BB,0x85BB,0x95BB,0xA5BB,0xD5BB,0xE5BB,0xF5BB,0x76BB,0x86BB,0x96BB,0xA6BB,0xD6BB,0xE6BB,0xF6BB,0x77BB,0x87BB,0x97BB,0xA7BB,0xD7BB,0xE7BB,0x78BB,0x88BB,0x98BB,0xA8BB,0xD8BB,0xE8BB,0x79BB,0x89BB,0x99BB,0xA9BB,0xD9BB,0xE9BB,0x7ABB,0x8ABB,0x9ABB,0xDABB,0xEABB,0x7BBB,0x8BBB,0x9BBB,0xABBB,0xCBBB,0xDBBB,0xEBBB,0x7CBB,0x8CBB,0x9CBB,0xACBB,0xCCBB,0xDCBB,0xECBB,0x7DBB,0x8DBB,0x9DBB,0xCDBB,0xDDBB,0xEDBB,0x6EBB,0x8EBB,0x9EBB,0xAEBB,0xEEBB,0x6FBB,0x7FBB,0x8FBB,0x9FBB,0xCFBB};
 
+// TODO: Replace less used menus (like DISTR and DISTR_DRAW) with menus containing commonly used TI-BASIC tokens that are hard to access?
+
+const u16 CTRL[] = { 0xCE, 0xCF, 0xD0, 0xD3, 0xD1, 0xD2, 0xD4, 0xD8, 0xD6,
+               0xD7, 0x96EF, 0xDA, 0xDB, 0xE6, 0x5F, 0xD5, 0xD9, 0x54BB, 0x45BB,
+               0x65EF, 0x11EF, 0x12EF };
+const u16 IO[]   = { 0xDC, 0xDD, 0xDE, 0xDF, 0xE5, 0xE0, 0xAD, 0xE1, 0xFB,
+               0x53BB, 0xE8, 0xE7, 0x98EF, 0x2ABB, 0x97EF, 0x56BB };
+const u16 COLOR[] = { 0x41EF, 0x42EF, 0x43EF, 0x44EF, 0x45EF, 0x46EF, 0x47EF, 0x48EF, 0x49EF, 0x4AEF,
+                0x4BEF, 0x4CEF, 0x4DEF, 0x4EEF, 0x4FEF };
+
+const u16 TEST[] = { 0x6A, 0x6F, 0x6C, 0x6E, 0x6B, 0x6D };
+const u16 LOGIC[] = { 0x40, 0x3C, 0x3D, 0xB8 };
+
+const u16 STRINGS[] = { 0x00AA, 0x01AA, 0x02AA, 0x03AA, 0x04AA, 0x05AA, 0x06AA, 0x07AA, 0x08AA, 0x09AA };
+const u16 GDBS[] = { 0x0061, 0x0161, 0x0261, 0x0361, 0x0461, 0x0561, 0x0661, 0x0761, 0x0861, 0x0961 };
+const u16 PICTURES[] = { 0x0060, 0x0160, 0x0260, 0x0360, 0x0460, 0x0560, 0x0660, 0x0760, 0x0860, 0x0960 };
+const u16 EQUATIONS[] = { 0x105E, 0x115E, 0x125E, 0x135E, 0x145E, 0x155E, 0x165E, 0x175E, 0x185E, 0x195E,
+                    0x205E, 0x215E, 0x225E, 0x235E, 0x245E, 0x255E, 0x265E, 0x275E, 0x285E, 0x295E, 0x2A5E, 0x2B5E,
+                    0x405E, 0x415E, 0x425E, 0x435E, 0x445E, 0x455E,
+                    0x805E, 0x815E, 0x825E };
+
+const u16 MATRIX_NAMES[] = { 0x005C, 0x015C, 0x025C, 0x035C, 0x045C, 0x055C, 0x065C, 0x075C, 0x085C, 0x095C };
+const u16 MATRIX_MATH[] = { 0xB3, 0x0E, 0xB5, 0xE2, 0xB4, 0x20, 0x14, 0x39BB, 0x3ABB, 0x29BB, 0x2DBB, 0x2EBB,
+                      0x15, 0x16, 0x17, 0x18 };
+
+const u16 MATH[] = { 0x03, 0x02, 0x0F, 0xBD, 0xF1, 0x27, 0x28, 0x25, 0x24, 0x33EF, 0x34EF, 0xA6EF };
+const u16 NUM[] = { 0xB2, 0x12, 0xB9, 0xBA, 0xB1, 0x1A, 0x19, 0x08, 0x09, 0x32EF };
+const u16 COMPLEX[] = { 0x25BB, 0x26BB, 0x27BB, 0x28BB, 0xB2, 0x2FBB, 0x30BB };
+const u16 PROBABILITY[] = { 0xAB, 0x94, 0x95, 0x2D, 0x0ABB, 0x1FBB, 0x0BBB, 0x35EF };
+const u16 FRACTION[] = { 0x30EF, 0x31EF, 0x39EF, 0x38EF };
+
+const u16 DRAW[]   = { 0x85, 0x9C, 0xA6, 0x9D, 0xA7, 0xA9, 0xA4, 0xA8, 0xA5, 0x93, 0x67EF };
+const u16 POINTS[] = { 0x9E, 0x9F, 0xA0, 0xA1, 0xA2, 0xA3, 0x13 };
+const u16 STORE[]  = { 0x98, 0x99, 0x9A, 0x9B };
+const u16 DRAW_BACKGROUND[] = { 0x5BEF, 0x64EF };
+
+const u16 DISTR[]      = { 0x1BBB, 0x10BB, 0x11BB, 0x13EF, 0x1CBB, 0x12BB, 0x1DBB, 0x13BB, 0x1EBB,
+                     0x14BB, 0x15BB, 0x16BB, 0x95EF, 0x17BB, 0x18BB, 0x19BB, 0x1ABB };
+const u16 DISTR_DRAW[] = { 0x35BB, 0x36BB, 0x37BB, 0x38BB };
+
+const u16 ANGLE[] = { 0x0B, 0xAE, 0x0A, 0x01, 0x1B, 0x1C, 0x1D, 0x1E };
+
+const u16 STAT_EDIT[] = { 0xE3, 0xE4, 0xFA, 0x4A };
+const u16 STAT_CALC[] = { 0xF2, 0xF3, 0xF8, 0xFF, 0xF9, 0x2E, 0x2F, 0xF4,
+                    0xF6, 0xF5, 0xF7, 0x33BB, 0x32BB, 0x16EF };
+const u16 STAT_TESTS[] = { 0x3BBB, 0x3CBB, 0x3DBB, 0x3EBB, 0x3FBB, 0x41BB, 0x48BB, 0x42BB, 0x49BB, 0x43BB, 0x44BB,
+                     0x40BB, 0x14EF, 0x47BB, 0x34BB, 0x15EF, 0x59BB };
+
+const u16 LIST_OPS[]  = { 0xE3, 0xE4, 0xB5, 0xE2, 0x23, 0x29BB, 0x2CBB, 0x58BB, 0x14, 0x3ABB, 0x39BB, 0xEB };
+const u16 LIST_MATH[] = { 0x1A, 0x19, 0x21, 0x1F, 0xB6, 0xB7, 0x0DBB, 0x0EBB };
 
 TokenDirectory directories[] = {
     #define DIR_PRGM 0
@@ -295,13 +371,47 @@ TokenDirectory directories[] = {
         { .name = "[", .name_count = 1, .tokens = ALL_SYMBOLS, .tokens_count = ARRLEN(ALL_SYMBOLS) },
     } },
 
-    #define DIR_MATH
+    #define DIR_MATH 5
     { .list_count = 4, .lists = {
         { .name = "Math"       , .name_count = 4 , .tokens = MATH       , .tokens_count = ARRLEN(MATH) },
         { .name = "Number"     , .name_count = 6 , .tokens = NUM        , .tokens_count = ARRLEN(NUM) },
         { .name = "Complex"    , .name_count = 7 , .tokens = COMPLEX    , .tokens_count = ARRLEN(COMPLEX) },
         { .name = "Probability", .name_count = 11, .tokens = PROBABILITY, .tokens_count = ARRLEN(PROBABILITY) },
         { .name = "Fraction"   , .name_count = 8 , .tokens = FRACTION   , .tokens_count = ARRLEN(FRACTION) },
+    } },
+
+    #define DIR_DRAW 6
+    { .list_count = 4, .lists = {
+        { .name = "Draw"      , .name_count = 4 , .tokens = DRAW, .tokens_count = ARRLEN(DRAW) },
+        { .name = "Points"    , .name_count = 6 , .tokens = POINTS, .tokens_count = ARRLEN(POINTS) },
+        { .name = "Store"     , .name_count = 5 , .tokens = STORE, .tokens_count = ARRLEN(STORE) },
+        { .name = "Background", .name_count = 10, .tokens = DRAW_BACKGROUND, .tokens_count = ARRLEN(DRAW_BACKGROUND) },
+    } },
+
+    #define DIR_ANGLE 7
+    { .list_count = 1, .lists = {
+        { .name = "Angle", .name_count = 5, .tokens = ANGLE, .tokens_count = ARRLEN(ANGLE) },
+    } },
+
+    #define DIR_DISTR 8
+    { .list_count = 2, .lists = {
+        { .name = "Distribute", .name_count = 10, .tokens = DISTR     , .tokens_count = ARRLEN(DISTR) },
+        { .name = "Draw"      , .name_count = 4 , .tokens = DISTR_DRAW, .tokens_count = ARRLEN(DISTR_DRAW) },
+    } },
+
+    #define DIR_LIST 9
+    { .list_count = 3, .lists = {
+        // NOTE: Hardcoded over-ride for user-named lists
+        { .name = "Names"    , .name_count = 5, .tokens = null    , .tokens_count = 0 },
+        { .name = "Operators", .name_count = 9, .tokens = LIST_OPS, .tokens_count = ARRLEN(LIST_OPS) },
+        { .name = "Math"     , .name_count = 4, .tokens = LIST_MATH, .tokens_count = ARRLEN(LIST_MATH) },
+    } },
+
+    #define DIR_STAT 10
+    { .list_count = 3, .lists = {
+        { .name = "Edit"     , .name_count = 4, .tokens = STAT_EDIT , .tokens_count = ARRLEN(STAT_EDIT) },
+        { .name = "Calculate", .name_count = 9, .tokens = STAT_CALC , .tokens_count = ARRLEN(STAT_CALC) },
+        { .name = "Tests"    , .name_count = 5, .tokens = STAT_TESTS, .tokens_count = ARRLEN(STAT_TESTS) },
     } },
 };
 
@@ -419,6 +529,14 @@ typedef enum CursorMode {
     CursorMode_Alpha,
 } CursorMode;
 
+typedef struct Linebreak {
+    // NOTE: Use get_linebreak_location to read linebreak location, because
+    // we want the 0th one to always be -1, but we want to be able to store
+    // a u16 from 0-65535, and we want to save storage space
+    u16 location_;
+    u8 indentation;
+} Linebreak;
+
 typedef struct Editor {
     bool program_loaded;
     u8 program_name[9]; // NOTE: Null terminated. Max 8 chars.
@@ -426,13 +544,17 @@ typedef struct Editor {
     s24 selected_program;
     bool archived;
 
-    u8 data[32768];
-    u16 size;
+    // #define PROGRAM_DATA_SIZE OS_VAR_MAX_SIZE
+    #define PROGRAM_DATA_SIZE 44000
+    u8 data[PROGRAM_DATA_SIZE];
+    s24 size;
     
-    s24 linebreaks[4096];
+    // 4800 bytes
+    // Linebreak linebreaks[1600];
+    Linebreak linebreaks[1600];
     s24 linebreaks_count;
     
-    u8 clipboard[256];
+    u8 clipboard[512];
     u16 clipboard_size;
 
     s24 cursor;
@@ -444,6 +566,11 @@ typedef struct Editor {
 
     s24 view_top_line;
     s24 view_first_character;
+
+    // Fancy effect with lerping
+    s24 scroller_visual_y;
+    s24 undo_bar_visual_height;
+    s24 redo_bar_visual_height;
 
     DeltaCollection undo_buffer;
     DeltaCollection redo_buffer;
@@ -464,11 +591,20 @@ static bool global_running = true;
 static bool global_run_program_at_end = false;
 static char *global_exit_message = null; // NOTE: For showing errors
 
+// 2500 bytes
 typedef struct OS_Program {
+    // NOTE: Not null terminated
     u8 name[8];
 } OS_Program;
-OS_Program os_programs[512];
+OS_Program os_programs[312];
 s24        os_programs_count;
+
+typedef struct OS_List {
+    // NOTE: Not null terminated
+    u8 name[5];
+} OS_List;
+OS_List os_lists[64];
+s24     os_lists_count;
 
 u24 alphabetical_sort_cost(char *name) {
     // NOTE: We sort by the first 4 letters.
@@ -505,56 +641,115 @@ void gc_after() {
     gfx_Begin();
 }
 
+void exit_with_message(char *message) {
+    global_running = false;
+    global_exit_message = message;
+}
+
 int main() {
     gfx_Begin();
     gfx_SetDrawBuffer();
     ti_SetGCBehavior(gc_before, gc_after);
     fontlib_SetFont(editor_font, 0);
     global_exit_message = null;
-
-    void *it = null;
-    while(true) {
-        char *name = ti_DetectVar(&it, null, OS_TYPE_PRGM);
-        if(!name) {
-            break;
-        } else {
-            bool name_valid = (name[0] != '!' && name[0] != '#');
-            if(name_valid) {
-                os_programs_count += 1;
-                char *dest = (char*)os_programs[os_programs_count - 1].name;
-                log("%s\n", name);
-                for(char *val = name; val <= val + 7; val += 1, dest += 1) {
-                    *dest = *val;
-                    if(*val == 0) {
+    {    
+        // NOTE: Scan OS for programs
+        void *it = null;
+        while(true) {
+            char *name = ti_DetectVar(&it, null, OS_TYPE_PRGM);
+            if(!name) {
+                break;
+            } else {
+                bool name_valid = (name[0] != '!' && name[0] != '#');
+                if(name_valid) {
+                    os_programs_count += 1;
+                    char *dest = (char*)os_programs[os_programs_count - 1].name;
+                    log("Loading program %s\n", name);
+                    for(char *val = name; val <= name + 7; val += 1, dest += 1) {
+                        *dest = *val;
+                        if(*val == 0) {
+                            break;
+                        }
+                    }
+                    if(os_programs_count == ARRLEN(os_programs)) {
                         break;
                     }
                 }
-                if(os_programs_count == ARRLEN(os_programs)) {
-                    break;
+            }
+        }
+
+        // NOTE: Bubble sort (could switch to radix later maybe, if startup time is long)
+        for(int i = 0; i < os_programs_count - 1; ++i) {
+            bool early_out = true;
+            for(int j = 0; j < os_programs_count - (1+i); ++j) {
+                s24 a = j;
+                s24 b = j + 1;
+                u24 a_cost = alphabetical_sort_cost((char*)os_programs[a].name);
+                u24 b_cost = alphabetical_sort_cost((char*)os_programs[b].name);
+                if(a_cost > b_cost) {
+                    OS_Program a_temp = os_programs[a];
+                    os_programs[a] = os_programs[b];
+                    os_programs[b] = a_temp;
+                    early_out = false;
+                }
+            }
+            if(early_out) { break; }
+        }
+        // NOTE: Hard-coded functionality
+        directories[DIR_PRGM].lists[3].tokens_count = cast(s16)os_programs_count;
+    }
+
+    {
+        // NOTE: Scan OS for lists
+        void *it = null;
+        while(true) {
+            char *name = ti_DetectVar(&it, null, OS_TYPE_REAL_LIST);
+            if(!name) {
+                break;
+            } else {
+                // NOTE: Lists start with 0x5D no matter what, and we don't care.
+                name += 1;
+                bool name_valid = true;
+                for(u8 i = 0; i <= 5 - 1; ++i) {
+                    if(i == 1 && name[i] >= 0 && name[i] <= 5) { name_valid = false; break; }
+                }
+                if(name_valid) {
+                    os_lists_count += 1;
+                    char *dest = (char*)os_lists[os_lists_count - 1].name;
+                    log("Loading list %s\n", name);
+                    for(char *val = name; val <= name + 5; val += 1, dest += 1) {
+                        *dest = *val;
+                        if(*val == 0) {
+                            break;
+                        }
+                    }
+                    if(os_lists_count == ARRLEN(os_lists)) {
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    // NOTE: Bubble sort
-    for(int i = 0; i < os_programs_count - 1; ++i) {
-        bool early_out = true;
-        for(int j = 0; j < os_programs_count - (1+i); ++j) {
-            s24 a = j;
-            s24 b = j + 1;
-            u24 a_cost = alphabetical_sort_cost((char*)os_programs[a].name);
-            u24 b_cost = alphabetical_sort_cost((char*)os_programs[b].name);
-            if(a_cost > b_cost) {
-                OS_Program a_temp = os_programs[a];
-                os_programs[a] = os_programs[b];
-                os_programs[b] = a_temp;
-                early_out = false;
+        // NOTE: Bubble sort (could switch to radix later maybe, if startup time is long)
+        for(int i = 0; i < os_lists_count - 1; ++i) {
+            bool early_out = true;
+            for(int j = 0; j < os_lists_count - (1+i); ++j) {
+                s24 a = j;
+                s24 b = j + 1;
+                u24 a_cost = alphabetical_sort_cost((char*)os_lists[a].name);
+                u24 b_cost = alphabetical_sort_cost((char*)os_lists[b].name);
+                if(a_cost > b_cost) {
+                    OS_List a_temp = os_lists[a];
+                    os_lists[a] = os_lists[b];
+                    os_lists[b] = a_temp;
+                    early_out = false;
+                }
             }
+            if(early_out) { break; }
         }
-        if(early_out) { break; }
+        // NOTE: Hard-coded functionality
+        directories[DIR_LIST].lists[0].tokens_count = cast(s16)os_lists_count;
     }
-    // NOTE: Hard-coded functionality
-    directories[DIR_PRGM].lists[3].tokens_count = cast(s16)os_programs_count;
     
     #define TARGET_FRAMERATE (15)
     #define TARGET_CLOCKS_PER_FRAME cast(s24)((cast(u24)CLOCKS_PER_SEC) / TARGET_FRAMERATE)
@@ -568,12 +763,15 @@ int main() {
 
     // NOTE: Autosave causes a 50ms spike for an archived 5000 byte program.
     // I can't notice any spike at all for a non-archived 5000 byte program.
-    #define AUTOSAVE_INTERVAL_MILLISECONDS (10000)
+    #define AUTOSAVE_INTERVAL_MILLISECONDS (100)
     #define AUTOSAVE_INTERVAL_CLOCK_CYCLES ((AUTOSAVE_INTERVAL_MILLISECONDS*CLOCKS_PER_SEC)/1000)
     s24 clock_cycles_until_autosave = AUTOSAVE_INTERVAL_CLOCK_CYCLES;
 
     global_run_program_at_end = false;
     global_running = true;
+    if(os_programs_count == 0) {
+        exit_with_message("No TI-Basic programs found.");
+    }
     while(global_running) {
         u24 current_clock = cast(u24)clock();
         s24 diff = cast(s24)(current_clock - previous_clock);
@@ -583,7 +781,7 @@ int main() {
             clock_cycles_until_autosave -= diff;
             if(clock_cycles_until_autosave <= 0) {
                 clock_cycles_until_autosave = AUTOSAVE_INTERVAL_CLOCK_CYCLES;
-                save_program();
+                save_program(false);
             }
         }
         if(clock_counter <= 0) {
@@ -609,7 +807,7 @@ int main() {
     }
 
     if(program.program_loaded) {
-        save_program();
+        save_program(true);
     }
 
     if(global_exit_message != null) {
@@ -630,6 +828,8 @@ int main() {
             msleep(10);
         }
     }
+
+    ti_SetGCBehavior(null, null);
     
     gfx_End();
 
@@ -640,8 +840,6 @@ int main() {
         data.view_top_line = program.view_top_line;
         os_RunPrgm(cast(char*)program.program_name, cast(void*)&data, sizeof(data), run_prgm_callback);
     }
-
-    ti_SetGCBehavior(null, null);
     
     return 0;
 }
@@ -663,6 +861,13 @@ int run_prgm_callback(void *data_, int retval) {
     program.cursor = data->cursor;
     program.view_top_line = data->view_top_line;
     return main();
+}
+
+s24 get_linebreak_location(int i) {
+    if(i == 0) {
+        return -1;
+    }
+    return cast(s24)program.linebreaks[i].location_;
 }
 
 void draw_string(char* str, u24 x, u8 y) {
@@ -708,7 +913,7 @@ void update_input(void) {
 
 void offset_linebreaks(s24 from_here, s24 offset_by) {
     for(int i = program.linebreaks_count - 1; i >= 0; --i) {
-        if(program.linebreaks[i] >= from_here) { program.linebreaks[i] += offset_by; }
+        if(get_linebreak_location(i) >= from_here) { program.linebreaks[i].location_ += offset_by; }
         else { break; }
     }
 }
@@ -725,7 +930,7 @@ s24 make_room_for_linebreaks(s24 first_linebreaks_program_data_index, s24 count)
     
     assert(count >= 1, "No room needed for linebreaks");
     for(s24 i = program.linebreaks_count - 1; i >= 0; --i) {
-        if(program.linebreaks[i] < first_linebreaks_program_data_index)
+        if(get_linebreak_location(i) < first_linebreaks_program_data_index)
         {
             result = i+1;
             break;
@@ -755,39 +960,89 @@ void zero(void *dest, s24 count) {
     }
 }
 
+s24 calculate_line_y(s24 token_offset) {
+    s24 result = program.linebreaks_count - 1;
+    for(int i = 0; i <= program.linebreaks_count - 1; ++i) {
+        if(token_offset <= get_linebreak_location(i)) {
+            result = i - 1;
+            break;
+        }
+    }
+    return result;
+}
+
+s24 calculate_cursor_y(void) {
+    return calculate_line_y(program.cursor);
+}
+
+void recompute_indentation_from_line(s24 line) {
+    s24 indentation = program.linebreaks[line].indentation;
+    for(int i = line; i < program.linebreaks_count - 1; ++i) {
+        program.linebreaks[i].indentation = cast(u8)indentation;
+        s24 first_loc = get_linebreak_location(i)+1;
+        s24 second_loc = get_linebreak_location(i+1)-1;
+        u8 byte = program.data[first_loc];
+        change_indentation_based_on_byte(indentation, byte);
+        if(second_loc != first_loc) {
+            byte = program.data[second_loc];
+            change_indentation_based_on_byte(indentation, byte);
+        }
+    }
+}
+
 // TODO: Check for off-by-one mistakes? No issues yet...
 // NOTE: push_delta may be null if you do not want to push to an undo/redo buffer
 void remove_tokens_(s24 at, u16 bytes_count, DeltaCollection* push_delta) {
-
     if(push_delta) {
         push_remove_delta(push_delta, program.cursor, at, program.data + at, bytes_count);
     }
 
-    s24 linebreaks_count = 0;
-    for(s24 i = at; i <= at + (bytes_count - 1); ++i) {
-        if(program.data[i] == LINEBREAK) {
-            linebreaks_count += 1;
-        }
+    if(at < 0) {
+        bytes_count += at;
+        at = 0;
     }
-    if(linebreaks_count >= 1) {
-        s24 first_linebreak = -1;
-        for(s24 i = 0; i <= program.linebreaks_count - 1; ++i) {
-            if(program.linebreaks[i] >= at) {
-                first_linebreak = i;
-                break;
+
+    if(at <= program.size - 1) {
+        s24 max = at + bytes_count - 1;
+        if(max >= program.size) {
+            max = program.size - 1;
+            s24 new_count = ((max - at) + 1);
+            assert(new_count >= 0 && new_count <= 65536, "Must be within u16 range");
+            bytes_count = cast(u16)new_count;
+        }
+        if(bytes_count != 0) {
+            s24 linebreaks_count = 0;
+            for(s24 i = at; i <= at + (bytes_count - 1); ++i) {
+                if(program.data[i] == LINEBREAK) {
+                    linebreaks_count += 1;
+                }
             }
+            s24 first_linebreak = -1;
+            for(s24 i = 0; i <= program.linebreaks_count - 1; ++i) {
+                if(get_linebreak_location(i) >= at) {
+                    first_linebreak = i;
+                    break;
+                }
+            }
+            assert(first_linebreak == calculate_line_y(at) + 1, "Todo replace with this call after this assertion doesn't fire");
+
+            if(linebreaks_count >= 1) {
+                assert(first_linebreak != -1, "Weird");
+                for(s24 i = first_linebreak; i <= program.linebreaks_count - linebreaks_count - 1; ++i) {
+                    program.linebreaks[i] = program.linebreaks[i + linebreaks_count];
+                }
+                program.linebreaks_count -= linebreaks_count;
+            }
+            for(s24 i = at; i <= program.size - (bytes_count - 1); ++i) {
+                program.data[i] = program.data[i + bytes_count];
+            }
+            offset_linebreaks(at, -1 * cast(s24)bytes_count);
+            program.size -= bytes_count;
+
+            recompute_indentation_from_line(first_linebreak - 1);
         }
-        assert(first_linebreak != -1, "Weird");
-        for(s24 i = first_linebreak; i <= program.linebreaks_count - linebreaks_count - 1; ++i) {
-            program.linebreaks[i] = program.linebreaks[i + linebreaks_count];
-        }
-        program.linebreaks_count -= linebreaks_count;
+
     }
-    for(s24 i = at; i <= program.size - (bytes_count - 1); ++i) {
-        program.data[i] = program.data[i + bytes_count];
-    }
-    offset_linebreaks(at, -1 * cast(s24)bytes_count);
-    program.size -= bytes_count;
 }
 
 void remove_tokens(s24 at, u16 bytes_count) {
@@ -797,29 +1052,36 @@ void remove_tokens(s24 at, u16 bytes_count) {
 
 // NOTE: push_delta may be null if you do not want to push to an undo/redo buffer
 void insert_tokens_(s24 at, u8 *tokens, u16 bytes_count, DeltaCollection* push_delta) {
-    program.size += bytes_count;
-    offset_linebreaks(at, bytes_count);
-    make_room_for_tokens(at, bytes_count);
-    
-    s24 linebreaks_to_add = 0;
-    for(s24 i = 0; i < bytes_count; ++i) {
-        if(tokens[i] == LINEBREAK) { linebreaks_to_add += 1; }
-    }
-    s24 add_linebreak_at;
-    if(linebreaks_to_add >= 1) {
-        add_linebreak_at = make_room_for_linebreaks(at, linebreaks_to_add);
-    }
-    s24 n = 0;
-    for(s24 i = at; i <= at + bytes_count - 1; ++i, ++n) {
-        program.data[i] = tokens[n];
-        if(tokens[n] == LINEBREAK) {
-            program.linebreaks[add_linebreak_at] = i;
-            add_linebreak_at += 1;
+    if(program.size + cast(s24)bytes_count < PROGRAM_DATA_SIZE) {
+        program.size += bytes_count;
+        offset_linebreaks(at, bytes_count);
+        make_room_for_tokens(at, bytes_count);
+        
+        s24 linebreaks_to_add = 0;
+        for(s24 i = 0; i < bytes_count; ++i) {
+            if(tokens[i] == LINEBREAK) { linebreaks_to_add += 1; }
         }
-    }
-    
-    if(push_delta) {
-        push_insert_delta(push_delta, program.cursor, at, bytes_count);
+        s24 add_linebreak_at;
+        if(linebreaks_to_add >= 1) {
+            add_linebreak_at = make_room_for_linebreaks(at, linebreaks_to_add);
+        }
+        s24 n = 0;
+        for(s24 i = at; i <= at + bytes_count - 1; ++i, ++n) {
+            program.data[i] = tokens[n];
+            if(tokens[n] == LINEBREAK) {
+                program.linebreaks[add_linebreak_at].location_ = cast(u16)i;
+                add_linebreak_at += 1;
+            }
+        }
+        
+        if(push_delta) {
+            push_insert_delta(push_delta, program.cursor, at, bytes_count);
+        }
+
+        s24 first_linebreak = calculate_line_y(at);
+        recompute_indentation_from_line(first_linebreak);
+    } else {
+        assert(false, "Program too large");
     }
 }
 
@@ -833,17 +1095,6 @@ void insert_token_u8(s24 at, u8 token) {
 }
 void insert_token_u16(s24 at, u16 token) {
     insert_tokens(at, cast(u8*)&token, 2);
-}
-
-s24 calculate_cursor_y(void) {
-    s24 cursor_y = program.linebreaks_count - 1;
-    for(int i = 0; i <= program.linebreaks_count - 1; ++i) {
-        if(program.cursor <= program.linebreaks[i]) {
-            cursor_y = i - 1;
-            break;
-        }
-    }
-    return cursor_y;
 }
 
 // It's intended to use this with an undo_delta, then pass the redo_buffer into put_undo_for_this_action_into_collection
@@ -865,9 +1116,8 @@ inline bool get_is_prgm_exec_override() {
     return program.opened_directory == &directories[DIR_PRGM] && program.opened_directory_list_index == 3;
 }
 
-void exit_with_message(char *message) {
-    global_running = false;
-    global_exit_message = message;
+inline bool get_is_list_name_override() {
+    return program.opened_directory == &directories[DIR_LIST] && program.opened_directory_list_index == 0;
 }
 
 // NOTE: This ZEROES the global "static Editor program = {}" state!!!
@@ -877,7 +1127,7 @@ void load_program(char *name) {
     // and a LoadedProgram struct with data that's cleared on editing-program load.
     // Not a big deal yet, though.
     zero(&program, sizeof(Editor));
-    program.linebreaks[0] = -1;
+    program.linebreaks[0].location_ = 0;
     program.linebreaks_count = 1;
 
     int n;
@@ -897,23 +1147,27 @@ void load_program(char *name) {
             program.archived = false;
         }
         u24 size = cast(u24)ti_GetSize(load);
-        assert(size <= ARRLEN(program.data), "Program too big");
+        assert(size <= PROGRAM_DATA_SIZE, "Program too big");
         assert(size <= 65536, "program.size is u16");
-        if(size <= ARRLEN(program.data)) {
+        if(size <= PROGRAM_DATA_SIZE) {
             u24 amount_read = ti_Read(program.data, 1, size, load);
             bool success = (size == amount_read);
             assert(success, "Failed to read. %d != %d", size, amount_read);
             if(success) {
                 program.size = cast(u16)size;
-                for(s24 i = 0; i <= program.size - 1;) {
-                    if(program.data[i] == LINEBREAK) {
+                s24 indentation = 0;
+                for(u16 i = 0; i <= program.size - 1;) {
+                    u8 byte = program.data[i];
+                    change_indentation_based_on_byte(indentation, byte);
+                    if(byte == LINEBREAK) {
                         if(program.linebreaks_count == ARRLEN(program.linebreaks) - 1) {
                             assert(cast(u24)program.linebreaks_count < ARRLEN(program.linebreaks) - 1, "Too big");
-                            exit_with_message("Program has too many line breaks (max 4096)");
+                            exit_with_message("Program has too many line breaks!");
                             break;
                         } else {
                             program.linebreaks_count += 1;
-                            program.linebreaks[program.linebreaks_count - 1] = i;
+                            program.linebreaks[program.linebreaks_count - 1].location_ = i;
+                            program.linebreaks[program.linebreaks_count - 1].indentation = cast(u8)indentation;
                         }
                     }
                     i += get_token_size(i);
@@ -923,7 +1177,7 @@ void load_program(char *name) {
                 exit_with_message("Failed to read program.");
             }
         } else {
-            exit_with_message("Program too big.");
+            exit_with_message("Program too big. (Max 42500 bytes)");
         }
         ti_Close(load);
     } else {
@@ -936,7 +1190,7 @@ void load_program(char *name) {
     }
 }
 
-void save_program(void) {
+void save_program(bool are_we_exiting_so_we_should_do_a_final_archiving_of_the_variable) {
     assert(program.program_loaded, "Program should be loaded");
     if(program.program_loaded) {
         // NOTE: Check if we have room to write this to ram.
@@ -952,44 +1206,24 @@ void save_program(void) {
             }
             ti_Close(handle);
         }
-
-        bool has_room = false;
-        char *try_names[] = { "abcdefgh", "azzeefga", "zrgyvaae", "qjgudbba", "qqljmznv", "zzzzkzkz", "alf", "z", "zam", "zqo", "zoplop", "fijqajl", "fjao", "fjqaio"};
-        bool any_names_valid = false;
-        for(int i = 0; i < cast(int)ARRLEN(try_names); ++i) {
-            handle = ti_OpenVar(try_names[i], "r", OS_TYPE_PRGM);
-            if(handle != 0) {
-                ti_Close(handle);
-            } else {
-                handle = ti_OpenVar(try_names[i], "w", OS_TYPE_PRGM);
-                any_names_valid = true;
-
-                s24 amount_free = cast(s24)ti_Write(program.data, 1, program.size, handle);
-                if(amount_free + space_that_will_be_freed >= program.size) {
-                    has_room = true;
-                } else {
-                    has_room = false;
-                }
-                ti_Close(handle);
-                ti_DeleteVar(try_names[i], OS_TYPE_PRGM);
-                break;
-            }
-        }
-        if(!any_names_valid) {
-            // TODO: We probably want to make a wizard that lets you deal with this
-            assert(false, "Names like abcdefgh, azzeefga, zrgyvaae, qjgudbba are already used...");
-        }
+        void *unused;
+        u24 free_ram = os_MemChk(&unused);
+        bool has_room = cast(s24)free_ram >= (cast(s24)program.size - cast(s24)space_that_will_be_freed);
         if(has_room) {
+            // ti_DeleteVar(cast(char*)program.program_name, OS_TYPE_PRGM);
             handle = ti_OpenVar(cast(char*)program.program_name, "w", OS_TYPE_PRGM);
-            u24 written = ti_Write(program.data, 1, program.size, handle);
-            assert(written == program.size, "Didn't write full program...");
-            ti_SetArchiveStatus(program.archived, handle);
+            u24 written = ti_Write(program.data, 1, cast(u24)program.size, handle);
+            assert(cast(s24)written == program.size, "Didn't write full program... %d/%d", written, program.size);
+            if(are_we_exiting_so_we_should_do_a_final_archiving_of_the_variable) {
+                ti_SetArchiveStatus(program.archived, handle);
+            }
             I_KNOW_ITS_UNUSED(written);
             ti_Close(handle);
         } else {
             // TODO: We probably want to open a "go archive some programs" wizard
             // so the user can still manage to save instead of losing their data...
             assert(false, "Not enough room to write appvar");
+            exit_with_message("Not enough RAM to save");
         }
     }
 }
@@ -1000,10 +1234,6 @@ void open_directory(u8 index) {
     program.opened_directory_token_index = 0;
 }
 
-// TODO: Maybe it'd be cool if you could goto string. Like
-// if you put a comment on a line starting with `"` you could 
-// go to those commented lines quickly
-// TODO: 2nd key inputs on keypad
 void update(void) {
     // NOTE: This will be updated after operations that affect cursor position/line breaks
     // We can afford to not update it after operations that affect cursor position but not line breaks
@@ -1096,16 +1326,6 @@ void update(void) {
             if(key_debounced[7] & kb_Up) program.selected_program -= 1;
             if(program.selected_program < 0) program.selected_program += os_programs_count;
             if(program.selected_program >= os_programs_count) program.selected_program -= os_programs_count;
-        }
-
-        if((key_down[1] & kb_2nd) && os_programs_count > 0) {
-            u8 toggle_archive_handle = ti_OpenVar((char*)os_programs[program.selected_program].name, "r", OS_TYPE_PRGM);
-            if(toggle_archive_handle != 0) {
-                bool was_archived = (ti_IsArchived(toggle_archive_handle) != 0);
-                ti_SetArchiveStatus(!was_archived, toggle_archive_handle);
-                ti_Close(toggle_archive_handle);
-            }
-            program.cursor_mode = CursorMode_Normal;
         }
 
         char do_jump = 0;
@@ -1236,8 +1456,9 @@ void update(void) {
         #undef TRY
         if((key_down[6] & kb_Enter) && (program.opened_directory_token_index <= list->tokens_count - 1)) select = true;
         if(select) {
-            bool hardcode = get_is_prgm_exec_override();
-            if(hardcode) {
+            bool hardcode_a = get_is_prgm_exec_override();
+            bool hardcode_b = get_is_list_name_override();
+            if(hardcode_a) {
                 u8 tokens[9];
                 u8 tokens_count = 9;
                 char *name = cast(char*)os_programs[program.opened_directory_token_index].name;
@@ -1251,14 +1472,40 @@ void update(void) {
                 tokens[0] = 0x5F; // prgm
                 insert_tokens(program.cursor, tokens, tokens_count);
                 program.cursor += tokens_count;
+            } else if(hardcode_b) {
+                u8 tokens[6];
+                u8 tokens_count = 6;
+                char *name = cast(char*)os_lists[program.opened_directory_token_index].name;
+                for(u8 i = 0; i <= 5 - 1; ++i) {
+                    if(name[i] == 0) {
+                        tokens_count = i + 1;
+                        break;
+                    }
+                    tokens[i + 1] = (u8)name[i];
+                }
+                tokens[0] = 0xEB; // L (list specifier)
+                insert_tokens(program.cursor, tokens, tokens_count);
+                program.cursor += tokens_count;
             } else {
                 u16 token = list->tokens[program.opened_directory_token_index];
-                if((token >> 8) == 0) {
-                    insert_token_u8(program.cursor, cast(u8)token);
-                    program.cursor += 1;
-                } else {
-                    insert_token_u16(program.cursor, token);
-                    program.cursor += 2;
+
+                u24 str_length = 0;
+                {
+                    // NOTE: Some ti_GetTokenStrings on invalid characters return like 200 for the length and are super invalid. So we just print the token number
+                    // This helps people not crash their OS 5.2 when inserting tokens from OS 5.4
+                    // TODO: Now, I hope that this is a consistent way to know if it's invalid. No idea. 
+                    u16 *ptr = (cast(u16*)list->tokens) + program.opened_directory_token_index;
+                    char *unused = ti_GetTokenString(cast(void**)&ptr, null, &str_length);
+                    I_KNOW_ITS_UNUSED(unused);
+                }
+                if(str_length > 0 && str_length <= 50) {
+                    if((token >> 8) == 0) {
+                        insert_token_u8(program.cursor, cast(u8)token);
+                        program.cursor += 1;
+                    } else {
+                        insert_token_u16(program.cursor, token);
+                        program.cursor += 2;
+                    }
                 }
             }
             program.opened_directory = null;
@@ -1270,9 +1517,10 @@ void update(void) {
         if(key_down[6] & kb_Clear) global_running = false;
 
         if(program.cursor_mode == CursorMode_Normal) {
-            // TODO: stat,draw,distr,list
             if(key_down[4] & kb_Prgm) { open_directory(DIR_PRGM); }
             if(key_down[5] & kb_Vars) { open_directory(DIR_VARS); }
+            if(key_down[2] & kb_Math) { open_directory(DIR_MATH); }
+            if(key_down[4] & kb_Stat) { open_directory(DIR_STAT); }
 
             if(key_down[3] & kb_GraphVar) { program.entering_goto = true; program.entering_goto_number = 0; }
 
@@ -1355,6 +1603,40 @@ void update(void) {
             if(key_down[2] & kb_Math ) { open_directory(DIR_TEST); }
             if(key_down[2] & kb_Recip) { open_directory(DIR_MATRIX); }
             if(key_down[3] & kb_0    ) { open_directory(DIR_ALL); }
+            if(key_down[4] & kb_Prgm ) { open_directory(DIR_DRAW); }
+            if(key_down[3] & kb_Apps ) { open_directory(DIR_ANGLE); }
+            if(key_down[5] & kb_Vars ) { open_directory(DIR_DISTR); }
+            if(key_down[4] & kb_Stat ) { open_directory(DIR_LIST); }
+
+            #define M(prefix,token) (u16)((((u16)token) << 8) | (u16)prefix)
+            if(key_down[3] & kb_Sin)   { insert_token_u8(program.cursor, OS_TOK_INV_SIN); program.cursor += 1; }
+            if(key_down[4] & kb_Cos)   { insert_token_u8(program.cursor, OS_TOK_INV_COS); program.cursor += 1; }
+            if(key_down[5] & kb_Tan)   { insert_token_u8(program.cursor, OS_TOK_INV_TAN); program.cursor += 1; }
+            if(key_down[6] & kb_Power) { insert_token_u8(program.cursor, OS_TOK_PI); program.cursor += 1; }
+            if(key_down[2] & kb_Square){ insert_token_u8(program.cursor, OS_TOK_SQRT); program.cursor += 1; }
+            if(key_down[3] & kb_Comma) { insert_token_u8(program.cursor, OS_TOK_EXP_10); program.cursor += 1; }
+            if(key_down[4] & kb_LParen){ insert_token_u8(program.cursor, OS_TOK_LEFT_BRACE); program.cursor += 1; }
+            if(key_down[5] & kb_RParen){ insert_token_u8(program.cursor, OS_TOK_RIGHT_BRACE); program.cursor += 1; }
+            if(key_down[6] & kb_Div)   { insert_token_u16(program.cursor, 0x31BB); program.cursor += 2; } // euler's constant
+            if(key_down[2] & kb_Log)   { insert_token_u8(program.cursor, OS_TOK_INV_LOG); program.cursor += 1; }
+            if(key_down[3] & kb_7)     { insert_token_u16(program.cursor, M(OS_TOK_EQU, OS_TOK_EQU_U)); program.cursor += 2; }
+            if(key_down[4] & kb_8)     { insert_token_u16(program.cursor, M(OS_TOK_EQU, OS_TOK_EQU_V)); program.cursor += 2; }
+            if(key_down[5] & kb_9)     { insert_token_u16(program.cursor, M(OS_TOK_EQU, OS_TOK_EQU_W)); program.cursor += 2; }
+            if(key_down[6] & kb_Mul)   { insert_token_u8(program.cursor, OS_TOK_LEFT_BRACKET); program.cursor += 1; }
+            if(key_down[2] & kb_Ln)    { insert_token_u8(program.cursor, 0xBF); program.cursor += 1; }
+            if(key_down[3] & kb_4)     { insert_token_u16(program.cursor, M(OS_TOK_LIST, OS_TOK_LIST_L4)); program.cursor += 2; }
+            if(key_down[4] & kb_5)     { insert_token_u16(program.cursor, M(OS_TOK_LIST, OS_TOK_LIST_L5)); program.cursor += 2; }
+            if(key_down[5] & kb_6)     { insert_token_u16(program.cursor, M(OS_TOK_LIST, OS_TOK_LIST_L6)); program.cursor += 2; }
+            if(key_down[6] & kb_Sub)   { insert_token_u8(program.cursor, OS_TOK_RIGHT_BRACKET); program.cursor += 1; }
+            // NOTE: Our own custom behavior for 2ND->STO
+            if(key_down[2] & kb_Sto)   { insert_token_u8(program.cursor, OS_TOK_LIST_L); program.cursor += 1; }
+            if(key_down[3] & kb_1)     { insert_token_u16(program.cursor, M(OS_TOK_LIST, OS_TOK_LIST_L1)); program.cursor += 2; }
+            if(key_down[4] & kb_2)     { insert_token_u16(program.cursor, M(OS_TOK_LIST, OS_TOK_LIST_L2)); program.cursor += 2; }
+            if(key_down[5] & kb_3)     { insert_token_u16(program.cursor, M(OS_TOK_LIST, OS_TOK_LIST_L3)); program.cursor += 2; }
+            // if(key_down[6] & kb_Add)   { insert_token_u8(program.cursor, ); program.cursor += 1; }
+            if(key_down[4] & kb_DecPnt){ insert_token_u8(program.cursor, 0x2C); program.cursor += 1; } // complex i
+            if(key_down[5] & kb_Chs)   { insert_token_u8(program.cursor, 0x72); program.cursor += 1; }
+            #undef M
         }
         
         if(key_down[1] & kb_Graph) {
@@ -1427,13 +1709,15 @@ void update(void) {
                     assert(size >= 0 && size <= 65536, "Must be within u16 range");
                 }
             } else {
-                remove_tokens(program.cursor, get_token_size(program.cursor));
+                if(program.cursor <= program.size - 1) {
+                    remove_tokens(program.cursor, get_token_size(program.cursor));
+                }
             }
             cursor_y = calculate_cursor_y();
         }
-        if(key_down[1] & kb_Mode) {
+        if(key_held[1] & kb_Mode) {
             // NOTE: Clear line
-            s24 line_start = program.linebreaks[cursor_y] + 1;
+            s24 line_start = get_linebreak_location(cursor_y) + 1;
             s24 before_line_break_or_end_of_program = program.size - 1;
             for(s24 i = line_start; i <= program.size - 1;) {
                 if(program.data[i] == LINEBREAK) {
@@ -1444,12 +1728,12 @@ void update(void) {
             }
             if(before_line_break_or_end_of_program >= line_start) {
                 s24 size = (before_line_break_or_end_of_program + 1) - line_start;
-                if(size >= 0 && size < 65535) {
+                if(size >= 1 && size < 65535) {
                     remove_tokens(line_start, cast(u16)size);
                     program.cursor = line_start;
                     cursor_y = calculate_cursor_y();
                 } else {
-                    assert(size >= 0 && size < 65535, "Must be within u16 range");
+                    assert(size >= 1 && size < 65535, "Must be within u16 range");
                 }
             }
         }
@@ -1462,26 +1746,36 @@ void update(void) {
             if(program.cursor_mode == CursorMode_Alpha) target_cursor += 8;
             else target_cursor += 1;
             if(target_cursor >= program.linebreaks_count - 1) target_cursor = program.linebreaks_count - 1;
-            program.cursor = program.linebreaks[target_cursor] + 1;
+            program.cursor = get_linebreak_location(target_cursor) + 1;
         }
         if(key_debounced[7] & kb_Up) {
             s24 target_cursor = cursor_y;
             if(program.cursor_mode == CursorMode_Alpha) target_cursor -= 8;
             else target_cursor -= 1;
             if(target_cursor < 0) target_cursor = 0;
-            program.cursor = program.linebreaks[target_cursor] + 1;
+            program.cursor = get_linebreak_location(target_cursor) + 1;
         }
         if(key_debounced[7] & kb_Left) {
-            if(program.cursor > 0) {
-                u8 prev_token_size = get_token_size(program.cursor - 1);
-                program.cursor -= prev_token_size;
+            if(program.cursor_mode == CursorMode_Second) {
+                program.cursor = get_linebreak_location(cursor_y) + 1;
+            } else {
+                if(program.cursor > 0) {
+                    u8 prev_token_size = get_token_size(program.cursor - 1);
+                    program.cursor -= prev_token_size;
+                }
             }
         }
         if(key_debounced[7] & kb_Right) {
-            u8 size = get_token_size(program.cursor);
-            program.cursor += size;
-            if(program.cursor >= program.size) {
-                program.cursor = program.size;
+            if(program.cursor_mode == CursorMode_Second) {
+                s24 target = program.size;
+                if(cursor_y <= program.linebreaks_count - 2) { target = get_linebreak_location(cursor_y + 1); }
+                program.cursor = target;
+            } else {
+                u8 size = get_token_size(program.cursor);
+                program.cursor += size;
+                if(program.cursor >= program.size) {
+                    program.cursor = program.size;
+                }
             }
         }
     }
@@ -1577,7 +1871,6 @@ void render(void) {
                 draw_string("*", x - (FONT_WIDTH + 2), y + 3);
             }
 
-
             y += FONT_HEIGHT + 2;
         }
 
@@ -1599,19 +1892,19 @@ void render(void) {
             } else {
                 fontlib_SetForegroundColor(BACKGROUND);
                 gfx_SetColor(FOREGROUND);
-                gfx_FillRectangle_NoClip(x - 2, 4, width + 4, FONT_HEIGHT + 2);
+                gfx_FillRectangle_NoClip(x - 1, 5, width + 2, FONT_HEIGHT + 1);
             }
             draw_string(program.opened_directory->lists[i].name, cast(u24)x, 5);
-            x += width + 2;
+            x += width + 4;
         }
         TokenList *list = program.opened_directory->lists + program.opened_directory_list_index;
         u8 y = 15;
-        bool is_prgm_exec_override = get_is_prgm_exec_override();
+        bool is_prgm_exec_hardcode_override = get_is_prgm_exec_override();
+        bool is_list_name_hardcode_override = get_is_list_name_override();
         for(u24 i = cast(u24)program.opened_directory_view_top_token_index; i < cast(u24)list->tokens_count && i < cast(u24)program.opened_directory_view_top_token_index + 22; ++i) {
             u24 str_length = 0;
             char *str;
-            if(is_prgm_exec_override) {
-                // NOTE: EXEC hard-coded override
+            if(is_prgm_exec_hardcode_override) {
                 str = (char*)os_programs[i].name;
                 str_length = 8;
                 for(int i = 0; i <= 7; ++i) {
@@ -1620,11 +1913,19 @@ void render(void) {
                         break;
                     }
                 }
+            } else if(is_list_name_hardcode_override) {
+                str = (char*)os_lists[i].name;
+                str_length = 5;
+                for(int i = 0; i <= 5 - 1; ++i) {
+                    if(str[i] == 0) {
+                        str_length = (u24)i;
+                        break;
+                    }
+                }
             } else {
-                u16 *ptr = list->tokens + i;
+                u16 *ptr = (cast(u16*)list->tokens) + i;
                 str = ti_GetTokenString(cast(void**)&ptr, null, &str_length);
             }
-
 
             if(str_length == 0 || str_length >= 40) {
                 // NOTE: Some ti_GetTokenStrings on invalid characters return like 200 for the length and are super invalid. So we just print the token number
@@ -1643,23 +1944,22 @@ void render(void) {
             } else {
                 fontlib_SetForegroundColor(BACKGROUND);
                 gfx_SetColor(FOREGROUND);
-                gfx_FillRectangle_NoClip(4, y - 1, width + 2, FONT_HEIGHT + 2);
+                gfx_FillRectangle_NoClip(4, y - 1, width + 4, FONT_HEIGHT + 2);
             }
-            
+
             char *key_table[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z" };
             char *key = null;
             if(i >= 0 && i <= ARRLEN(key_table) - 1) { key = key_table[i]; }
             else { key = null; }
             if(key) { draw_string(key, 5, y); }
-            if(is_prgm_exec_override) draw_string_max_chars(str, 8, 2*FONT_WIDTH+7, y);
-            else draw_string_max_chars(str, str_length, 2*FONT_WIDTH+7, y);
+            draw_string_max_chars(str, str_length, 2*FONT_WIDTH+7, y);
             y += FONT_HEIGHT + 2;
         }
         fontlib_SetForegroundColor(FOREGROUND);
     } else {
         s24 cursor_y = program.linebreaks_count - 1;
         for(int i = 0; i <= program.linebreaks_count - 1; ++i) {
-            if(program.cursor <= program.linebreaks[i]) {
+            if(program.cursor <= get_linebreak_location(i)) {
                 cursor_y = i - 1;
                 break;
             }
@@ -1677,8 +1977,8 @@ void render(void) {
         s24 cursor_char_in_line = 0;
         {
             s24 last_char_in_line = program.size - 1;
-            if(cursor_y + 1 <= program.linebreaks_count - 1) { last_char_in_line = program.linebreaks[cursor_y + 1] - 1; }
-            for(int i = program.linebreaks[cursor_y] + 1; i < last_char_in_line;) {
+            if(cursor_y + 1 <= program.linebreaks_count - 1) { last_char_in_line = get_linebreak_location(cursor_y + 1) - 1; }
+            for(int i = get_linebreak_location(cursor_y) + 1; i < last_char_in_line;) {
                 u8 byte_0 = program.data[i];
                 assert(byte_0 != LINEBREAK, "Impossible? Linebreak pointers misaligned?");
                 u24 str_length = 1;
@@ -1694,18 +1994,25 @@ void render(void) {
                 i += get_token_size(i);
             }
         }
+        cursor_char_in_line += program.linebreaks[cursor_y].indentation;
         if(cursor_char_in_line <= 42) {
             program.view_first_character = 0;
         } else {
             program.view_first_character = (cursor_char_in_line - cast(s24)CHARS_PER_LINE/cast(s24)2);
         }
 
-        int first_token = program.linebreaks[program.view_top_line] + 1;
-        gfx_FillRectangle_NoClip(0,y,2,FONT_HEIGHT);
+        int first_token = get_linebreak_location(program.view_top_line) + 1;
         s24 current_view_y = program.view_top_line;
         Range selection;
         if(program.cursor_selecting) selection = get_selecting_range();
         s24 chars_until_line = -program.view_first_character;
+        s24 indentation_level = program.linebreaks[program.view_top_line].indentation;
+        if(chars_until_line < 0) {
+            s24 change = min(-chars_until_line, indentation_level);
+            chars_until_line += change;
+            indentation_level -= change;
+        }
+        x += indentation_level * FONT_WIDTH;
         for(int i = first_token; i < program.size;) {
             bool on_cursor = (i == program.cursor);
             bool selected = on_cursor;
@@ -1760,7 +2067,7 @@ void render(void) {
                 u8 length_of_rect = FONT_WIDTH;
                 if(str_length > 0) { length_of_rect = cast(u8)str_length*FONT_WIDTH; }
                 gfx_FillRectangle_NoClip(cast(u24)x,y+FONT_HEIGHT+1,length_of_rect,1);
-                gfx_FillRectangle_NoClip(cast(u24)x-1,y,2,FONT_HEIGHT);
+                gfx_FillRectangle_NoClip(cast(u24)x-1,y,1,FONT_HEIGHT);
             }
             if(str_length > 0) {
                 x += str_length*FONT_WIDTH;
@@ -1773,33 +2080,48 @@ void render(void) {
                 y += FONT_HEIGHT + 2;
                 current_view_y += 1;
                 chars_until_line = -program.view_first_character;
+                indentation_level = program.linebreaks[current_view_y].indentation;
+                if(chars_until_line < 0) {
+                    s24 change = min(-chars_until_line, indentation_level);
+                    chars_until_line += change;
+                    indentation_level -= change;
+                }
+                x += indentation_level * FONT_WIDTH;
                 if(current_view_y <= program.linebreaks_count - 1) {
-                    i = program.linebreaks[current_view_y] + 1;
-                    gfx_FillRectangle_NoClip(0,y,2,FONT_HEIGHT);
+                    i = get_linebreak_location(current_view_y) + 1;
+                    if(current_view_y == program.linebreaks_count - 1) {
+                        gfx_FillRectangle(0,y+FONT_HEIGHT+4,64,1);
+                    }
                 } else {
                     break;
                 }
             }
-            if(y+10 >= 230)
+            if(y >= 235)
             {
                 break;
             }
         }
-        if(program.cursor >= program.size)
-        {
+        if(program.cursor >= program.size) {
             gfx_FillRectangle_NoClip(cast(u24)x,y+FONT_HEIGHT+1,FONT_WIDTH,3);
             gfx_FillRectangle_NoClip(cast(u24)x-1,y,2,FONT_HEIGHT);
         }
 
-        u24 scrollbar_y = ((cast(u24)cursor_y * 230) / (cast(u24)program.linebreaks_count - 1));
-        gfx_FillRectangle_NoClip(320-2, cast(u8)scrollbar_y, 2, 10);
+        s24 scrollbar_target_y = ((cast(s24)cursor_y * 230) / (cast(s24)program.linebreaks_count - 1));
+        // NOTE: Lerp is x + (y-x)*a;
+        program.scroller_visual_y = program.scroller_visual_y + (((scrollbar_target_y - program.scroller_visual_y) * 3) / 10);
+        gfx_FillRectangle_NoClip(320-2, cast(u8)program.scroller_visual_y, 2, 10);
         
-        u8 undo_bar_height = (u8)min(240, 3*program.undo_buffer.delta_count);
-        gfx_FillRectangle_NoClip(320-5,240-undo_bar_height,2,undo_bar_height);
-        u8 redo_bar_height = (u8)min(240, 3*program.redo_buffer.delta_count);
-        gfx_FillRectangle_NoClip(320-8,240-redo_bar_height,2,redo_bar_height);
+        s24 undo_bar_target_height = cast(s24)min(240, 3*program.undo_buffer.delta_count);
+        program.undo_bar_visual_height = program.undo_bar_visual_height + (((undo_bar_target_height - program.undo_bar_visual_height) * 6) / 10);
+        if(program.undo_bar_visual_height <= 3 && undo_bar_target_height == 0) { program.undo_bar_visual_height = 0; }
+        gfx_FillRectangle_NoClip(320-5,240-cast(u8)program.undo_bar_visual_height,2,cast(u8)program.undo_bar_visual_height);
+
+        s24 redo_bar_target_height = cast(s24)min(240, 3*program.redo_buffer.delta_count);
+        program.redo_bar_visual_height = program.redo_bar_visual_height + (((redo_bar_target_height - program.redo_bar_visual_height) * 6) / 10);
+        if(program.redo_bar_visual_height <= 3 && redo_bar_target_height == 0) { program.redo_bar_visual_height = 0; }
+        gfx_FillRectangle_NoClip(320-8,240-cast(u8)program.redo_bar_visual_height,2,cast(u8)program.redo_bar_visual_height);
         
-        // log("%2x %2x [%2x] %2x %2x\n", program.data[program.cursor - 2], program.data[program.cursor - 1], program.data[program.cursor], program.data[program.cursor + 1], program.data[program.cursor+2]);
+        log("%2x %2x [%2x] %2x %2x\n", program.data[program.cursor - 2], program.data[program.cursor - 1], program.data[program.cursor], program.data[program.cursor + 1], program.data[program.cursor+2]);
     }
     
     fontlib_SetTransparency(true);
@@ -1815,7 +2137,7 @@ void render(void) {
         }
     }
     if(cursor_glyph) {
-        draw_string(cursor_glyph, 320-(FONT_WIDTH+4), 2);
+        draw_string(cursor_glyph, 320-(FONT_WIDTH+8), 2);
     }
 
     if(program.entering_goto) {
@@ -1828,7 +2150,7 @@ void render(void) {
         u24 rect_width = rect_max_x - rect_min_x;
         u8 rect_height = rect_max_y - rect_min_y;
         gfx_SetColor(BACKGROUND);
-        gfx_FillRectangle_NoClip(rect_min_x+1, rect_min_y+1, rect_width-2, rect_height-2);
+        gfx_FillRectangle_NoClip(rect_min_x-2, rect_min_y-2, rect_width+4, rect_height+4);
         gfx_SetColor(FOREGROUND);
         gfx_Rectangle_NoClip(rect_min_x, rect_min_y, rect_width, rect_height);
         static u8 str[8] = "0000000\0";
@@ -1873,12 +2195,12 @@ void dump_deltas(char *title) {
 }
 void dump(char *dump_name) {
     log("\n%s:\n", dump_name);
-    assert(program.linebreaks[0] == -1, "First linebreak should be -1");
+    assert(program.linebreaks[0].location_ == 0, "First linebreak should be undestructed");
     int current_linebreak = 1;
     for(int i = 0; i <= program.size - 1; ++i) {
         bool is_linebreak = false;
         if(current_linebreak <= program.linebreaks_count - 1) {
-            if(program.linebreaks[current_linebreak] == i) {
+            if(get_linebreak_location(current_linebreak) == i) {
                 is_linebreak = true;
                 current_linebreak += 1;
             }
@@ -1894,7 +2216,7 @@ void dump(char *dump_name) {
     }
     log("\n%d linebreaks\n", program.linebreaks_count);
     for(int i = 0; i < program.linebreaks_count; ++i) {
-        log("%d,", program.linebreaks[i]);
+        log("%d,", program.linebreaks[i].location_);
     }
     log("\n");
 }
