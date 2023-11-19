@@ -25,23 +25,22 @@
 //   But I need to actually experiment with this to see what's actually good.
 
 // TODO: Some performance concerns
-// - Rendering a whole screen of glyphs takes a very long time.
-//   May be good to have a partial-renderer, or see if a hand-rolled font renderer
-//   will be faster.
-// - Indentation slows down token insertion/deletion at the top of a big project file
-//   And there's some slow-down from make_room_for_tokens's copy.
-//   Perhaps unrolling that copy loops would help.
+// - Rendering a whole screen full of glyphs takes a very long time (~200ms).
+//   May be good to have a partial-renderer, or see if a bespoke font renderer
+//   with few requirements will be faster.
+
+// TODO: "adriweb: it's a nice ide feature to be able to list labels and instant-jump to them"
 
 // TODO: Maybe it'd be cool if you could goto string. Like
 // if you put a comment on a line starting with `"` you could 
 // go to those commented lines quickly
-// TODO: Quick way to re-open-last-state in editor (especially while os_RunPrgm is temporarily disabled)
 // TODO: User-space favorite tokens from catalog
 // TODO: hotkey ideas
 // - Delete from cursor to end of line
 // - Delete from cursor to start of line
 // - Goto next/previous occurance of letter in line (like VI's f/t/F/T)
 // - Go to top/bottom of screen without scrolling (2nd -> up/down)
+//   (probably a bad idea to use 2nd for this because sometimes it's nice to be in a different mode and not worry about differing behavior)
 
 #include <fileioc.h>
 #include <ti/screen.h>
@@ -72,6 +71,7 @@ void copy(void *src, void *dest, s24 count);
 void zero(void *dest, s24 count);
 int run_prgm_callback(void *data_, int retval);
 void update(void);
+void blit_loading_indicator(void);
 void render(void);
 void load_program(char *name);
 void save_program(bool are_we_exiting_so_we_should_do_a_final_archiving_of_the_variable);
@@ -80,7 +80,9 @@ void draw_string_max_chars(char* str, u24 max, u24 x, u8 y);
 void update_input(void);
 u8 get_token_size(s24 position_in_program);
 typedef struct Range { s24 min; s24 max; } Range;
-Range get_selecting_range();
+Range get_selecting_range(void);
+s24 calculate_line_y(s24 token_offset);
+s24 calculate_cursor_y(void);
 
 // https://merthsoft.com/linkguide/ti83+/tokens.html#note1
 // https://merthsoft.com/linkguide/ti83+/vars.html#equation
@@ -121,10 +123,6 @@ const fontlib_font_t *editor_font = (fontlib_font_t*)editor_font_data;
     #define dump_delta(...)
     #define dump_deltas(...)
 #endif
-
-#define BACKGROUND 0x08
-#define FOREGROUND 0xF7
-#define HIGHLIGHT 0x7A
 
 #define LINEBREAK 0x3F
 #define SPACE 0x29
@@ -468,8 +466,10 @@ Delta* push_delta(DeltaCollection *collection, void *data, u24 data_size, u24 pu
         while(collection->data_size + push_size > ARRLEN(collection->data)) {
             u24 to_free = size_of_delta((Delta*)&collection->data[0]);
             u24 remaining = collection->data_size - to_free;
+            log("Freeing %d so we can have %d remaining to push our %d\n",to_free,remaining,push_size); 
             copy(collection->data + to_free, collection->data, (s24)remaining);
             collection->data_size = remaining;
+            collection->delta_count -= 1;
         }
         result = cast(Delta*)(collection->data + collection->data_size);
         copy(data, result, cast(s24)data_size);
@@ -537,7 +537,7 @@ typedef struct Linebreak {
     u8 indentation;
 } Linebreak;
 
-typedef struct Editor {
+typedef struct LoadedProgram {
     bool program_loaded;
     u8 program_name[9]; // NOTE: Null terminated. Max 8 chars.
     s24 view_top_program;
@@ -550,19 +550,14 @@ typedef struct Editor {
     s24 size;
     
     // 4800 bytes
-    // Linebreak linebreaks[1600];
     Linebreak linebreaks[1600];
     s24 linebreaks_count;
-    
-    u8 clipboard[512];
-    u16 clipboard_size;
+
+    u16 linebreaks_dirty_indentation_min;
 
     s24 cursor;
     bool cursor_selecting;
     s24 cursor_started_selecting;
-
-    CursorMode cursor_mode;
-    bool alpha_is_lowercase;
 
     s24 view_top_line;
     s24 view_first_character;
@@ -576,7 +571,11 @@ typedef struct Editor {
     DeltaCollection redo_buffer;
 
     bool entering_goto;
-    u24 entering_goto_number;
+    u8 entering_goto_chars[2];
+    u8 entering_goto_chars_count;
+
+    // NOTE: If this is a lot, then we reduce the max width to keep the program running smoothly
+    u16 rendered_token_count_last_frame;
 
     // NOTE: Null if closed. If `opened_directory.name == "EXEC"`
     // then we have some hardcoded overrides to match TI-OS's functionality
@@ -584,12 +583,41 @@ typedef struct Editor {
     s24 opened_directory_list_index;
     s24 opened_directory_token_index;
     s24 opened_directory_view_top_token_index;
+} LoadedProgram;
+
+#define CLIPBOARD_APPVAR_NAME "AETHRCLP"
+#define SETTINGS_DATA_APPVAR_NAME "AETHRDAT"
+typedef struct EditorSettings {
+    // NOTE: When I change the settings struct,
+    // increment the version define by 1.
+    // This will make it so old versions are invalidated on load.
+    // This first member "settings_struct_version" must persist.
+    #define CURRENT_SETTINGS_STRUCT_VERSION 0
+    u8 settings_struct_version;
+
+    bool light_mode;
+    u8 last_editing_program[9];
+    u16 last_cursor_y;
+} EditorSettings;
+
+typedef struct Editor {
+    CursorMode cursor_mode;
+    bool alpha_is_lowercase;
+
+    bool running;
+    bool run_program_at_end;
+    // NOTE: For showing errors to user before we close
+    char *exit_message_at_end; 
+    // NOTE: Saved/loaded on program start/exit. Persistent.
+    EditorSettings settings;
+
+    u8 background_color;
+    u8 foreground_color;
+    u8 highlight_color;
 } Editor;
 
-static Editor program = {};
-static bool global_running = true;
-static bool global_run_program_at_end = false;
-static char *global_exit_message = null; // NOTE: For showing errors
+static LoadedProgram program = {};
+static Editor editor = {};
 
 // 2500 bytes
 typedef struct OS_Program {
@@ -633,25 +661,51 @@ u8 key_held[8];
 u8 key_up[8];
 u8 key_debounced[8];
 u8 key_timers[8][8];
+bool on_pressed;
+bool on_held;
 
-void gc_before() {
-    gfx_End();
-}
-void gc_after() {
-    gfx_Begin();
-}
-
+void gc_before() { gfx_End(); }
+void gc_after() { gfx_Begin(); }
 void exit_with_message(char *message) {
-    global_running = false;
-    global_exit_message = message;
+    editor.running = false;
+    editor.exit_message_at_end = message;
+}
+void update_editor_theme_based_on_settings() {
+    if(editor.settings.light_mode == false) {
+        editor.background_color = 0x08;
+        editor.foreground_color = 0xF7;
+        editor.highlight_color = 0x7A;
+    } else {
+        editor.background_color = 0xFF;
+        editor.foreground_color = 0x00;
+        editor.highlight_color = 0xF7;
+    }
 }
 
 int main() {
+
+    {
+        u8 editor_settings_handle = ti_Open(SETTINGS_DATA_APPVAR_NAME, "r");
+        if(editor_settings_handle != 0) {
+            u8 stored_settings_struct_version;
+            u24 count_read = ti_Read(&stored_settings_struct_version, 1, 1, editor_settings_handle);
+            if(count_read == 1 && stored_settings_struct_version == CURRENT_SETTINGS_STRUCT_VERSION) {
+                ti_Seek(0,SEEK_SET,editor_settings_handle);
+                ti_Read(&editor.settings, sizeof(EditorSettings), 1, editor_settings_handle);
+            }
+            ti_Close(editor_settings_handle);
+        }
+        editor.settings.settings_struct_version = CURRENT_SETTINGS_STRUCT_VERSION;
+    }
+    update_editor_theme_based_on_settings();
+
+    editor.running = true;
+    kb_DisableOnLatch();
     gfx_Begin();
     gfx_SetDrawBuffer();
     ti_SetGCBehavior(gc_before, gc_after);
     fontlib_SetFont(editor_font, 0);
-    global_exit_message = null;
+
     {    
         // NOTE: Scan OS for programs
         void *it = null;
@@ -767,12 +821,12 @@ int main() {
     #define AUTOSAVE_INTERVAL_CLOCK_CYCLES ((AUTOSAVE_INTERVAL_MILLISECONDS*CLOCKS_PER_SEC)/1000)
     s24 clock_cycles_until_autosave = AUTOSAVE_INTERVAL_CLOCK_CYCLES;
 
-    global_run_program_at_end = false;
-    global_running = true;
+    editor.run_program_at_end = false;
+    editor.running = true;
     if(os_programs_count == 0) {
         exit_with_message("No TI-Basic programs found.");
     }
-    while(global_running) {
+    while(editor.running) {
         u24 current_clock = cast(u24)clock();
         s24 diff = cast(s24)(current_clock - previous_clock);
         previous_clock = current_clock;
@@ -810,11 +864,11 @@ int main() {
         save_program(true);
     }
 
-    if(global_exit_message != null) {
+    if(editor.exit_message_at_end != null) {
         #define DISPLAY_EXIT_MESSAGE_FOR_MILLISECONDS 5000
         #define DISPLAY_EXIT_MESSAGE_FOR_CLOCK_CYCLES ((DISPLAY_EXIT_MESSAGE_FOR_MILLISECONDS*CLOCKS_PER_SEC) / 1000)
         u24 message_length = 0;
-        while(global_exit_message[message_length] != 0) {
+        while(editor.exit_message_at_end[message_length] != 0) {
             message_length += 1;
         }
         u24 start = cast(u24)clock();
@@ -822,7 +876,7 @@ int main() {
         fontlib_SetForegroundColor(0x00);
         fontlib_SetTransparency(true);
         draw_string("Aether exited with message", 320/2 - (FONT_WIDTH*26)/2, 240/2 - FONT_HEIGHT - FONT_HEIGHT - 2);
-        draw_string(global_exit_message, 320/2 - (FONT_WIDTH*message_length)/2, 240/2 - FONT_HEIGHT);
+        draw_string(editor.exit_message_at_end, 320/2 - (FONT_WIDTH*message_length)/2, 240/2 - FONT_HEIGHT);
         gfx_SwapDraw();
         while(clock() - start <= DISPLAY_EXIT_MESSAGE_FOR_CLOCK_CYCLES) {
             msleep(10);
@@ -833,7 +887,25 @@ int main() {
     
     gfx_End();
 
-    if(global_run_program_at_end && program.program_loaded) {
+    {
+        u8 editor_settings_handle = ti_Open(SETTINGS_DATA_APPVAR_NAME, "w");
+        if(editor_settings_handle != 0) {
+            if(program.program_loaded) {
+                assert(ARRLEN(editor.settings.last_editing_program) == ARRLEN(program.program_name), "Sizes should be equal");
+                copy(cast(u8*)program.program_name, cast(u8*)editor.settings.last_editing_program, ARRLEN(editor.settings.last_editing_program));
+                editor.settings.last_cursor_y = cast(u16)calculate_cursor_y();
+            }
+            ti_Write(&editor.settings, sizeof(EditorSettings), 1, editor_settings_handle);
+            if(ti_ArchiveHasRoomVar(editor_settings_handle)) {
+                ti_SetArchiveStatus(true, editor_settings_handle);
+            }
+            ti_Close(editor_settings_handle);
+        }
+    }
+
+    ti_Delete(CLIPBOARD_APPVAR_NAME);
+
+    if(editor.run_program_at_end && program.program_loaded) {
         RunPrgmCallbackReconstructProgram data;
         copy(program.program_name, data.program_name, 9);
         data.cursor = program.cursor;
@@ -863,6 +935,7 @@ int run_prgm_callback(void *data_, int retval) {
     return main();
 }
 
+// Takes a linebreak Y, returns offset into program.data
 s24 get_linebreak_location(int i) {
     if(i == 0) {
         return -1;
@@ -909,6 +982,14 @@ void update_input(void) {
             }
         }
     }
+
+    on_pressed = false;
+    if(kb_On) {
+        if(!on_held) { on_pressed = true; }
+        on_held = true;
+    } else {
+        on_held = false;
+    }
 }
 
 void offset_linebreaks(s24 from_here, s24 offset_by) {
@@ -919,8 +1000,32 @@ void offset_linebreaks(s24 from_here, s24 offset_by) {
 }
 
 void make_room_for_tokens(s24 first_index, s24 count) {
-    for(int i = program.size - 1; i >= first_index + count; --i) {
-        program.data[i] = program.data[i - count];
+    // NOTE: iterate backwards so we copy things forwards
+    // Initially this function was only this following for loop,
+    // but after unrolling the loop,
+    // the editor is noticably faster at inserting tokens with large programs.
+    // for(int i = program.size - 1; i >= first_index + count; --i) {
+    //     program.data[i] = program.data[i - count];
+    // }
+
+    s24 max = program.size - 1;
+    s24 min = first_index + count;
+    s24 iterate_count = (max + 1) - min;
+    s24 iterate_count_divided_by_4 = iterate_count / 4;
+    s24 iterate_count_remainder = iterate_count - (iterate_count_divided_by_4 * 4);
+    s24 it = max;
+    while(iterate_count_divided_by_4 >= 1) {
+        program.data[it - 0] = program.data[it - (count + 0)];
+        program.data[it - 1] = program.data[it - (count + 1)];
+        program.data[it - 2] = program.data[it - (count + 2)];
+        program.data[it - 3] = program.data[it - (count + 3)];
+        it -= 4;
+        iterate_count_divided_by_4 -= 1;
+    }
+    while(iterate_count_remainder >= 1) {
+        program.data[it] = program.data[it - count];
+        it -= 1;
+        iterate_count_remainder -= 1;
     }
 }
 
@@ -975,22 +1080,14 @@ s24 calculate_cursor_y(void) {
     return calculate_line_y(program.cursor);
 }
 
-void recompute_indentation_from_line(s24 line) {
-    s24 indentation = program.linebreaks[line].indentation;
-    for(int i = line; i < program.linebreaks_count - 1; ++i) {
-        program.linebreaks[i].indentation = cast(u8)indentation;
-        s24 first_loc = get_linebreak_location(i)+1;
-        s24 second_loc = get_linebreak_location(i+1)-1;
-        u8 byte = program.data[first_loc];
-        change_indentation_based_on_byte(indentation, byte);
-        if(second_loc != first_loc) {
-            byte = program.data[second_loc];
-            change_indentation_based_on_byte(indentation, byte);
-        }
-    }
+// NOTE: When a line changes, only future lines get affected.
+// So line+1 is what is marked as dirty
+void mark_indentation_dirty_from_line_changed(s24 line_that_changed) {
+    assert(program.linebreaks_dirty_indentation_min != 0, "Should never be 0");
+    assert(line_that_changed >= 0 && line_that_changed <= 65536, "valid u16 range");
+    program.linebreaks_dirty_indentation_min = min(program.linebreaks_dirty_indentation_min, cast(u16)line_that_changed + 1);
 }
 
-// TODO: Check for off-by-one mistakes? No issues yet...
 // NOTE: push_delta may be null if you do not want to push to an undo/redo buffer
 void remove_tokens_(s24 at, u16 bytes_count, DeltaCollection* push_delta) {
     if(push_delta) {
@@ -1017,29 +1114,44 @@ void remove_tokens_(s24 at, u16 bytes_count, DeltaCollection* push_delta) {
                     linebreaks_count += 1;
                 }
             }
-            s24 first_linebreak = -1;
-            for(s24 i = 0; i <= program.linebreaks_count - 1; ++i) {
-                if(get_linebreak_location(i) >= at) {
-                    first_linebreak = i;
-                    break;
-                }
-            }
-            assert(first_linebreak == calculate_line_y(at) + 1, "Todo replace with this call after this assertion doesn't fire");
+            s24 first_linebreak = calculate_line_y(at) + 1;
 
             if(linebreaks_count >= 1) {
-                assert(first_linebreak != -1, "Weird");
                 for(s24 i = first_linebreak; i <= program.linebreaks_count - linebreaks_count - 1; ++i) {
                     program.linebreaks[i] = program.linebreaks[i + linebreaks_count];
                 }
                 program.linebreaks_count -= linebreaks_count;
             }
-            for(s24 i = at; i <= program.size - (bytes_count - 1); ++i) {
-                program.data[i] = program.data[i + bytes_count];
+
+            {
+                // NOTE: Unrolled version of the loop
+                // for(s24 i = at; i <= program.size - (bytes_count - 1); ++i) {
+                //     program.data[i] = program.data[i + bytes_count];
+                // }
+                s24 min = at;
+                s24 max = program.size - (bytes_count - 1);
+                s24 iterate_count = (max+1)-min;
+                s24 iterate_count_by_4 = iterate_count/4;
+                s24 iterate_count_remainder = iterate_count - (4*iterate_count_by_4);
+                s24 it = min;
+                while(iterate_count_by_4 >= 1) {
+                    program.data[it+0] = program.data[it + 0 + bytes_count];
+                    program.data[it+1] = program.data[it + 1 + bytes_count];
+                    program.data[it+2] = program.data[it + 2 + bytes_count];
+                    program.data[it+3] = program.data[it + 3 + bytes_count];
+                    it += 4;
+                    iterate_count_by_4 -= 1;
+                }
+                while(iterate_count_remainder >= 1) {
+                    program.data[it] = program.data[it + bytes_count];
+                    it += 1;
+                    iterate_count_remainder -= 1;
+                }
             }
             offset_linebreaks(at, -1 * cast(s24)bytes_count);
             program.size -= bytes_count;
 
-            recompute_indentation_from_line(first_linebreak - 1);
+            mark_indentation_dirty_from_line_changed(first_linebreak - 1);
         }
 
     }
@@ -1079,7 +1191,7 @@ void insert_tokens_(s24 at, u8 *tokens, u16 bytes_count, DeltaCollection* push_d
         }
 
         s24 first_linebreak = calculate_line_y(at);
-        recompute_indentation_from_line(first_linebreak);
+        mark_indentation_dirty_from_line_changed(first_linebreak);
     } else {
         assert(false, "Program too large");
     }
@@ -1120,13 +1232,10 @@ inline bool get_is_list_name_override() {
     return program.opened_directory == &directories[DIR_LIST] && program.opened_directory_list_index == 0;
 }
 
-// NOTE: This ZEROES the global "static Editor program = {}" state!!!
+// NOTE: This ZEROES the global "static LoadedProgram program = {}" state!
 void load_program(char *name) {
-    // TODO: Likely this means we should have two structs:
-    // an Editor struct with persistent data for the program,
-    // and a LoadedProgram struct with data that's cleared on editing-program load.
-    // Not a big deal yet, though.
-    zero(&program, sizeof(Editor));
+    blit_loading_indicator();
+    zero(&program, sizeof(LoadedProgram));
     program.linebreaks[0].location_ = 0;
     program.linebreaks_count = 1;
 
@@ -1182,11 +1291,12 @@ void load_program(char *name) {
         ti_Close(load);
     } else {
         exit_with_message("Program could not be read.");
-        global_running = false;
+        editor.running = false;
     }
 
     if(fully_loaded_program) {
         program.program_loaded = true;
+        program.linebreaks_dirty_indentation_min = 1;
     }
 }
 
@@ -1217,6 +1327,7 @@ void save_program(bool are_we_exiting_so_we_should_do_a_final_archiving_of_the_v
         } else {
             // TODO: We probably want to open a "go archive some programs" wizard
             // so the user can still manage to save instead of losing their data...
+            // The good thing is autosave will make this not so bad
             assert(false, "Not enough room to write appvar");
             exit_with_message("Not enough RAM to save");
         }
@@ -1229,89 +1340,157 @@ void open_directory(u8 index) {
     program.opened_directory_token_index = 0;
 }
 
+bool save_clipboard(s24 at, s24 size) {
+    assert(size >= 0 && size <= PROGRAM_DATA_SIZE, "Too big clipboard save");
+    bool success = false;
+    u8 clipboard_handle = ti_Open(CLIPBOARD_APPVAR_NAME, "w");
+    if(clipboard_handle) {
+        u24 written = ti_Write(program.data + at, cast(u24)size, 1, clipboard_handle);
+        if(written == 1) {
+            success = true;
+            if(ti_ArchiveHasRoomVar(clipboard_handle)) {
+                ti_SetArchiveStatus(true, clipboard_handle);
+            }
+        }
+        ti_Close(clipboard_handle);
+        if(!success) { ti_Delete(CLIPBOARD_APPVAR_NAME); }
+    }
+    return success;
+}
+
+// NOTE: Returns number of bytes pasted
+s24 paste_clipboard(s24 at) {
+    s24 amount_pasted = 0;
+    u8 handle = ti_Open(CLIPBOARD_APPVAR_NAME, "r");
+    if(handle != 0) {
+        u16 size = ti_GetSize(handle);
+        u8 *data = ti_GetDataPtr(handle);
+        insert_tokens(at, data, size);
+        ti_Close(handle);
+        amount_pasted = cast(s24)size;
+    }
+    return amount_pasted;
+}
+
 void update(void) {
     // NOTE: This will be updated after operations that affect cursor position/line breaks
     // We can afford to not update it after operations that affect cursor position but not line breaks
     // if we do that operation repeatedly and want to not iterate over linebreaks in the program much.
     s24 cursor_y = calculate_cursor_y();
 
+    if(on_pressed) {
+        editor.settings.light_mode = !editor.settings.light_mode;
+        update_editor_theme_based_on_settings();
+    }
+
     if(key_down[1] & kb_2nd) {
-        if(program.cursor_mode != CursorMode_Second) {
-            program.cursor_mode = CursorMode_Second;
+        if(editor.cursor_mode != CursorMode_Second) {
+            editor.cursor_mode = CursorMode_Second;
         } else {
-            program.cursor_mode = CursorMode_Normal;
+            editor.cursor_mode = CursorMode_Normal;
         }
     }
     if(key_down[2] & kb_Alpha) {
-        if(program.cursor_mode == CursorMode_Normal) {
-            program.cursor_mode = CursorMode_Alpha;
-            program.alpha_is_lowercase = false;
-        } else if(program.cursor_mode == CursorMode_Second) {
-            program.cursor_mode = CursorMode_Alpha;
-            program.alpha_is_lowercase = true;
-        } else if(program.cursor_mode == CursorMode_Alpha) {
-            program.cursor_mode = CursorMode_Normal;
+        if(editor.cursor_mode == CursorMode_Normal) {
+            editor.cursor_mode = CursorMode_Alpha;
+            editor.alpha_is_lowercase = false;
+        } else if(editor.cursor_mode == CursorMode_Second) {
+            editor.cursor_mode = CursorMode_Alpha;
+            editor.alpha_is_lowercase = true;
+        } else if(editor.cursor_mode == CursorMode_Alpha) {
+            editor.cursor_mode = CursorMode_Normal;
         }
     }
     
     if(program.entering_goto) {
         if(key_down[6] & kb_Clear) program.entering_goto = false;
-        u24 digit = 1000;
-        if(key_down[3] & kb_1) { digit = 1; }
-        if(key_down[4] & kb_2) { digit = 2; }
-        if(key_down[5] & kb_3) { digit = 3; }
-        if(key_down[3] & kb_4) { digit = 4; }
-        if(key_down[4] & kb_5) { digit = 5; }
-        if(key_down[5] & kb_6) { digit = 6; }
-        if(key_down[3] & kb_7) { digit = 7; }
-        if(key_down[4] & kb_8) { digit = 8; }
-        if(key_down[5] & kb_9) { digit = 9; }
-        if(key_down[3] & kb_0) { digit = 0; }
-        if(key_debounced[1] & kb_Del && program.entering_goto > 0) {
-            program.entering_goto_number = program.entering_goto_number/10;
+        u8 character = 0;
+        if(editor.cursor_mode != CursorMode_Alpha) {
+            if(key_debounced[3] & kb_1) { character = '1'; }
+            if(key_debounced[4] & kb_2) { character = '2'; }
+            if(key_debounced[5] & kb_3) { character = '3'; }
+            if(key_debounced[3] & kb_4) { character = '4'; }
+            if(key_debounced[4] & kb_5) { character = '5'; }
+            if(key_debounced[5] & kb_6) { character = '6'; }
+            if(key_debounced[3] & kb_7) { character = '7'; }
+            if(key_debounced[4] & kb_8) { character = '8'; }
+            if(key_debounced[5] & kb_9) { character = '9'; }
+            if(key_debounced[3] & kb_0) { character = '0'; }
+        } else {
+            if(key_debounced[2] & kb_Math)   { character = 'A'; }
+            if(key_debounced[3] & kb_Apps)   { character = 'B'; }
+            if(key_debounced[4] & kb_Prgm)   { character = 'C'; }
+            if(key_debounced[2] & kb_Recip)  { character = 'D'; }
+            if(key_debounced[3] & kb_Sin)    { character = 'E'; }
+            if(key_debounced[4] & kb_Cos)    { character = 'F'; }
+            if(key_debounced[5] & kb_Tan)    { character = 'G'; }
+            if(key_debounced[6] & kb_Power)  { character = 'H'; }
+            if(key_debounced[2] & kb_Square) { character = 'I'; }
+            if(key_debounced[3] & kb_Comma)  { character = 'J'; }
+            if(key_debounced[4] & kb_LParen) { character = 'K'; }
+            if(key_debounced[5] & kb_RParen) { character = 'L'; }
+            if(key_debounced[6] & kb_Div)    { character = 'M'; }
+            if(key_debounced[2] & kb_Log)    { character = 'N'; }
+            if(key_debounced[3] & kb_7)      { character = 'O'; }
+            if(key_debounced[4] & kb_8)      { character = 'P'; }
+            if(key_debounced[5] & kb_9)      { character = 'Q'; }
+            if(key_debounced[6] & kb_Mul)    { character = 'R'; }
+            if(key_debounced[2] & kb_Ln)     { character = 'S'; }
+            if(key_debounced[3] & kb_4)      { character = 'T'; }
+            if(key_debounced[4] & kb_5)      { character = 'U'; }
+            if(key_debounced[5] & kb_6)      { character = 'V'; }
+            if(key_debounced[6] & kb_Sub)    { character = 'W'; }
+            if(key_debounced[2] & kb_Sto)    { character = 'X'; }
+            if(key_debounced[3] & kb_1)      { character = 'Y'; }
+            if(key_debounced[4] & kb_2)      { character = 'Z'; }
         }
-        if(digit <= 9) {
-            u24 new_number = (program.entering_goto_number * 10) + digit;
-            if(new_number < program.entering_goto_number || new_number >= 10000000) { }
-            else { program.entering_goto_number = new_number; }
+        if(key_debounced[1] & kb_Del && program.entering_goto_chars_count > 0) {
+            program.entering_goto_chars_count -= 1;
+        }
+        if(character != 0) {
+            if(program.entering_goto_chars_count <= ARRLEN(program.entering_goto_chars) - 1) {
+                program.entering_goto_chars_count += 1;
+                program.entering_goto_chars[program.entering_goto_chars_count - 1] = character;
+            }
         }
         if(key_down[6] & kb_Enter) {
             program.entering_goto = false;
-            for(int i = 0; i <= program.size - 1;) {
-                if(program.data[i] == LBL) {
-                    u24 number_count = 0;
-                    for(int j = i + 1; j <= program.size - 1;) {
-                        if(!(program.data[j] >= 0x30 && program.data[j] <= 0x39)) {
-                            break;
+            if(program.entering_goto_chars_count > 0) {
+                for(int i = 0; i <= program.size - 1;) {
+                    if(program.data[i] == LBL) {
+                        u8 entering_index = 0;
+                        bool failed = false;
+                        for(int j = i + 1; j <= min(i + 2, program.size - 1);) {
+                            if((program.data[j] >= '0' && program.data[j] <= '9') ||
+                               (program.data[j] >= 'A' && program.data[j] <= 'Z')) {
+                                if(program.data[j] != program.entering_goto_chars[entering_index]) {
+                                    failed = true;
+                                    break;
+                                }
+                                entering_index += 1;
+                            } else {
+                                break;
+                            }
+                            j += get_token_size(j);
                         }
-                        number_count += 1;
-                        j += get_token_size(j);
-                    }
-                    if(number_count >= 1) {
-                        u24 current_lbl_number = 0;
-                        u24 magnitude = 1;
-                        for(int j = i + cast(s24)number_count; j >= i + 1; --j) {
-                            current_lbl_number += (program.data[j] - 0x30)*magnitude;
-                            magnitude *= 10;
-                        }
-                        if(current_lbl_number == program.entering_goto_number) {
+                        if(failed == false && entering_index == program.entering_goto_chars_count) {
                             program.cursor = i;
                             cursor_y = calculate_cursor_y();
                             program.view_top_line = max(0, cursor_y - 11);
                             break;
                         }
                     }
+                    i += get_token_size(i);
                 }
-                i += get_token_size(i);
             }
         }
     } else if(!program.program_loaded) {
         // NOTE: Program selector
-        if(key_down[6] & kb_Clear) global_running = false;
+        if(key_down[6] & kb_Clear) editor.running = false;
 
         if(os_programs_count == 0) {
             program.selected_program = 0;
-        } else if(program.cursor_mode == CursorMode_Alpha) {
+        } else if(editor.cursor_mode == CursorMode_Alpha) {
             if(key_debounced[7] & kb_Down) program.selected_program += 9;
             if(key_debounced[7] & kb_Up) program.selected_program -= 9;
             if(program.selected_program < 0) program.selected_program = 0;
@@ -1366,10 +1545,22 @@ void update(void) {
             }
         }
 
-        if(key_debounced[6] & kb_Enter && program.selected_program >= 0 && program.selected_program <= os_programs_count - 1) {
+        if(key_down[6] & kb_Enter && program.selected_program >= 0 && program.selected_program <= os_programs_count - 1) {
             assert(os_programs_count != 0, "Shouldn't be able to reach this logically");
             char *stored_name = (char*)os_programs[program.selected_program].name;
             load_program(stored_name);
+        } else if(key_down[1] & kb_Mode) {
+            u8 exists = ti_OpenVar((char*)editor.settings.last_editing_program, "r", OS_TYPE_PRGM);
+            log("%s\n yaga",editor.settings.last_editing_program);
+            if(exists != 0) {
+                ti_Close(exists);
+                load_program((char*)editor.settings.last_editing_program);
+                u16 cursor_y = editor.settings.last_cursor_y;
+                if(cursor_y >= program.linebreaks_count) {
+                    cursor_y = cast(u16)program.linebreaks_count - 1;
+                }
+                program.cursor = get_linebreak_location(cursor_y) + 1;
+            }
         }
 
     } else if(program.opened_directory) {
@@ -1388,7 +1579,7 @@ void update(void) {
         if(program.opened_directory_list_index < 0) program.opened_directory_list_index += program.opened_directory->list_count;
         if(program.opened_directory_list_index >= program.opened_directory->list_count) program.opened_directory_list_index -= program.opened_directory->list_count;
         TokenList *list = program.opened_directory->lists + program.opened_directory_list_index;
-        if(program.cursor_mode == CursorMode_Alpha) {
+        if(editor.cursor_mode == CursorMode_Alpha) {
             if((key_debounced[7] & kb_Up)) {
                 program.opened_directory_token_index -= 8;
             }
@@ -1409,7 +1600,7 @@ void update(void) {
         }
         bool select = false;
         #define TRY(index) if(index <= list->tokens_count - 1) { select = true; program.opened_directory_token_index = index; }
-        if(program.cursor_mode != CursorMode_Alpha) {
+        if(editor.cursor_mode != CursorMode_Alpha) {
             if(key_down[3] & kb_1) { TRY(0) }
             if(key_down[4] & kb_2) { TRY(1) }
             if(key_down[5] & kb_3) { TRY(2) }
@@ -1509,15 +1700,15 @@ void update(void) {
     } else {
         // NOTE: Editor
 
-        if(key_down[6] & kb_Clear) global_running = false;
+        if(key_down[6] & kb_Clear) editor.running = false;
 
-        if(program.cursor_mode == CursorMode_Normal) {
+        if(editor.cursor_mode == CursorMode_Normal) {
             if(key_down[4] & kb_Prgm) { open_directory(DIR_PRGM); }
             if(key_down[5] & kb_Vars) { open_directory(DIR_VARS); }
             if(key_down[2] & kb_Math) { open_directory(DIR_MATH); }
             if(key_down[4] & kb_Stat) { open_directory(DIR_STAT); }
 
-            if(key_down[3] & kb_GraphVar) { program.entering_goto = true; program.entering_goto_number = 0; }
+            if(key_down[3] & kb_GraphVar) { program.entering_goto = true; program.entering_goto_chars_count = 0; }
 
             if(key_down[2] & kb_Recip) { insert_token_u8(program.cursor, 0x0C); program.cursor += 1; }
             if(key_down[3] & kb_Sin)   { insert_token_u8(program.cursor, 0xC2); program.cursor += 1; }
@@ -1557,44 +1748,44 @@ void update(void) {
                 // But it will take time to research that, so I'll see if the bug gets fixed upstream first
                 // and work on other parts of the editor.
                 // https://wikiti.brandonw.net/index.php?title=83Plus:Hooks:9BAC
-                global_running = false;
-                global_run_program_at_end = true;
+                editor.running = false;
+                editor.run_program_at_end = true;
             }
 #endif
         }
-        else if(program.cursor_mode == CursorMode_Alpha) {
-            if(key_down[2] & kb_Math)  { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB0BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'A'); program.cursor += 1; } } // A
-            if(key_down[3] & kb_Apps)  { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB1BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'B'); program.cursor += 1; } } // B
-            if(key_down[4] & kb_Prgm)  { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB2BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'C'); program.cursor += 1; } } // C
-            if(key_down[2] & kb_Recip) { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB3BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'D'); program.cursor += 1; } } // D
-            if(key_down[3] & kb_Sin)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB4BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'E'); program.cursor += 1; } } // E
-            if(key_down[4] & kb_Cos)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB5BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'F'); program.cursor += 1; } } // F
-            if(key_down[5] & kb_Tan)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB6BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'G'); program.cursor += 1; } } // G
-            if(key_down[6] & kb_Power) { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB7BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'H'); program.cursor += 1; } } // H
-            if(key_down[2] & kb_Square){ if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB8BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'I'); program.cursor += 1; } } // I
-            if(key_down[3] & kb_Comma) { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB9BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'J'); program.cursor += 1; } } // J
-            if(key_down[4] & kb_LParen){ if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBABB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'K'); program.cursor += 1; } } // K
-            if(key_down[5] & kb_RParen){ if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBCBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'L'); program.cursor += 1; } } // L
-            if(key_down[6] & kb_Div)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBDBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'M'); program.cursor += 1; } } // M
-            if(key_down[2] & kb_Log)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBEBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'N'); program.cursor += 1; } } // N
-            if(key_down[3] & kb_7)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBFBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'O'); program.cursor += 1; } } // O
-            if(key_down[4] & kb_8)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC0BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'P'); program.cursor += 1; } } // P
-            if(key_down[5] & kb_9)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC1BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'Q'); program.cursor += 1; } } // Q
-            if(key_down[6] & kb_Mul)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC2BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'R'); program.cursor += 1; } } // R
-            if(key_down[2] & kb_Ln)    { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC3BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'S'); program.cursor += 1; } } // S
-            if(key_down[3] & kb_4)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC4BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'T'); program.cursor += 1; } } // T
-            if(key_down[4] & kb_5)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC5BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'U'); program.cursor += 1; } } // U
-            if(key_down[5] & kb_6)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC6BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'V'); program.cursor += 1; } } // V
-            if(key_down[6] & kb_Sub)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC7BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'W'); program.cursor += 1; } } // W
-            if(key_down[2] & kb_Sto)   { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC8BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'X'); program.cursor += 1; } } // X
-            if(key_down[3] & kb_1)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC9BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'Y'); program.cursor += 1; } } // Y
-            if(key_down[4] & kb_2)     { if(program.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xCABB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'Z'); program.cursor += 1; } } // Z
+        else if(editor.cursor_mode == CursorMode_Alpha) {
+            if(key_down[2] & kb_Math)  { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB0BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'A'); program.cursor += 1; } } // A
+            if(key_down[3] & kb_Apps)  { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB1BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'B'); program.cursor += 1; } } // B
+            if(key_down[4] & kb_Prgm)  { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB2BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'C'); program.cursor += 1; } } // C
+            if(key_down[2] & kb_Recip) { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB3BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'D'); program.cursor += 1; } } // D
+            if(key_down[3] & kb_Sin)   { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB4BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'E'); program.cursor += 1; } } // E
+            if(key_down[4] & kb_Cos)   { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB5BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'F'); program.cursor += 1; } } // F
+            if(key_down[5] & kb_Tan)   { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB6BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'G'); program.cursor += 1; } } // G
+            if(key_down[6] & kb_Power) { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB7BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'H'); program.cursor += 1; } } // H
+            if(key_down[2] & kb_Square){ if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB8BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'I'); program.cursor += 1; } } // I
+            if(key_down[3] & kb_Comma) { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xB9BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'J'); program.cursor += 1; } } // J
+            if(key_down[4] & kb_LParen){ if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBABB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'K'); program.cursor += 1; } } // K
+            if(key_down[5] & kb_RParen){ if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBCBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'L'); program.cursor += 1; } } // L
+            if(key_down[6] & kb_Div)   { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBDBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'M'); program.cursor += 1; } } // M
+            if(key_down[2] & kb_Log)   { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBEBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'N'); program.cursor += 1; } } // N
+            if(key_down[3] & kb_7)     { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xBFBB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'O'); program.cursor += 1; } } // O
+            if(key_down[4] & kb_8)     { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC0BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'P'); program.cursor += 1; } } // P
+            if(key_down[5] & kb_9)     { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC1BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'Q'); program.cursor += 1; } } // Q
+            if(key_down[6] & kb_Mul)   { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC2BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'R'); program.cursor += 1; } } // R
+            if(key_down[2] & kb_Ln)    { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC3BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'S'); program.cursor += 1; } } // S
+            if(key_down[3] & kb_4)     { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC4BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'T'); program.cursor += 1; } } // T
+            if(key_down[4] & kb_5)     { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC5BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'U'); program.cursor += 1; } } // U
+            if(key_down[5] & kb_6)     { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC6BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'V'); program.cursor += 1; } } // V
+            if(key_down[6] & kb_Sub)   { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC7BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'W'); program.cursor += 1; } } // W
+            if(key_down[2] & kb_Sto)   { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC8BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'X'); program.cursor += 1; } } // X
+            if(key_down[3] & kb_1)     { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xC9BB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'Y'); program.cursor += 1; } } // Y
+            if(key_down[4] & kb_2)     { if(editor.alpha_is_lowercase) { insert_token_u16(program.cursor, 0xCABB); program.cursor += 2; } else { insert_token_u8(program.cursor, 'Z'); program.cursor += 1; } } // Z
             if(key_down[5] & kb_3)     { insert_token_u8(program.cursor, 0x5B); program.cursor += 1; }
             if(key_down[6] & kb_Add)   { insert_token_u8(program.cursor, 0x2A); program.cursor += 1; }
             if(key_down[3] & kb_0)     { insert_token_u8(program.cursor, SPACE); program.cursor += 1; }
             if(key_down[4] & kb_DecPnt){ insert_token_u8(program.cursor, 0x3E); program.cursor += 1; }
             if(key_down[5] & kb_Chs)   { insert_token_u8(program.cursor, 0xAF); program.cursor += 1; }
-        } else if(program.cursor_mode == CursorMode_Second) {
+        } else if(editor.cursor_mode == CursorMode_Second) {
             if(key_down[2] & kb_Math ) { open_directory(DIR_TEST); }
             if(key_down[2] & kb_Recip) { open_directory(DIR_MATRIX); }
             if(key_down[3] & kb_0    ) { open_directory(DIR_ALL); }
@@ -1661,14 +1852,12 @@ void update(void) {
                 Range range = get_selecting_range();
                 s24 size = (range.max + 1) - range.min;
                 assert(size >= 0, "Underflow error");
-                if(size <= 256) {
+                if(save_clipboard(range.min, size)) {
                     program.cursor_selecting = false;
-                    program.clipboard_size = (u16)size;
-                    copy(program.data + range.min, program.clipboard, size);
                 }
             } else {
-                // Paste
-                insert_tokens(program.cursor, program.clipboard, program.clipboard_size);
+                // Paste without moving cursor
+                paste_clipboard(program.cursor);
             }
             cursor_y = calculate_cursor_y();
         }
@@ -1678,17 +1867,15 @@ void update(void) {
                 Range range = get_selecting_range();
                 s24 size = (range.max + 1) - range.min;
                 assert(size >= 0, "Underflow error");
-                if(size <= 256) {
+                if(save_clipboard(range.min, size)) {
                     program.cursor_selecting = false;
-                    program.clipboard_size = (u16)size;
-                    copy(program.data + range.min, program.clipboard, size);
                     remove_tokens(range.min, (u16)size);
                     program.cursor = range.min;
                 }
             } else {
-                // Paste
-                insert_tokens(program.cursor, program.clipboard, program.clipboard_size);
-                program.cursor += program.clipboard_size;
+                // Paste with moving cursor
+                s24 amount_pasted = paste_clipboard(program.cursor);
+                program.cursor += amount_pasted;
             }
             cursor_y = calculate_cursor_y();
         }
@@ -1738,20 +1925,20 @@ void update(void) {
         }
         if(key_debounced[7] & kb_Down) {
             s24 target_cursor = cursor_y;
-            if(program.cursor_mode == CursorMode_Alpha) target_cursor += 8;
+            if(editor.cursor_mode == CursorMode_Alpha) target_cursor += 8;
             else target_cursor += 1;
             if(target_cursor >= program.linebreaks_count - 1) target_cursor = program.linebreaks_count - 1;
             program.cursor = get_linebreak_location(target_cursor) + 1;
         }
         if(key_debounced[7] & kb_Up) {
             s24 target_cursor = cursor_y;
-            if(program.cursor_mode == CursorMode_Alpha) target_cursor -= 8;
+            if(editor.cursor_mode == CursorMode_Alpha) target_cursor -= 8;
             else target_cursor -= 1;
             if(target_cursor < 0) target_cursor = 0;
             program.cursor = get_linebreak_location(target_cursor) + 1;
         }
         if(key_debounced[7] & kb_Left) {
-            if(program.cursor_mode == CursorMode_Second) {
+            if(editor.cursor_mode == CursorMode_Second) {
                 program.cursor = get_linebreak_location(cursor_y) + 1;
             } else {
                 if(program.cursor > 0) {
@@ -1761,7 +1948,7 @@ void update(void) {
             }
         }
         if(key_debounced[7] & kb_Right) {
-            if(program.cursor_mode == CursorMode_Second) {
+            if(editor.cursor_mode == CursorMode_Second) {
                 s24 target = program.size;
                 if(cursor_y <= program.linebreaks_count - 2) { target = get_linebreak_location(cursor_y + 1); }
                 program.cursor = target;
@@ -1816,13 +2003,29 @@ void convert_byte_to_hex(u8 input, char *result) {
     result[1] = hexes[input & (16 - 1)];
 }
 
+void blit_loading_indicator(void) {
+    gfx_BlitScreen();
+
+    gfx_SetColor(editor.background_color);
+    #define LOADING_INDICATOR_WIDTH 40
+    fontlib_SetForegroundColor(editor.foreground_color);
+    fontlib_SetBackgroundColor(editor.background_color);
+    fontlib_SetTransparency(true);
+    gfx_FillRectangle_NoClip((320/2)-(LOADING_INDICATOR_WIDTH/2), 0, LOADING_INDICATOR_WIDTH, FONT_HEIGHT + 2);
+    draw_string("...", (320/2) - ((FONT_WIDTH*3)/2), 1);
+    #undef LOADING_INDICATOR_WIDTH
+
+    gfx_SwapDraw();
+}
+
 void render(void) {
-    gfx_FillScreen(BACKGROUND);
-    fontlib_SetForegroundColor(FOREGROUND);
-    fontlib_SetBackgroundColor(BACKGROUND);
+
+    gfx_FillScreen(editor.background_color);
+    fontlib_SetForegroundColor(editor.foreground_color);
+    fontlib_SetBackgroundColor(editor.background_color);
     fontlib_SetTransparency(true);
     fontlib_SetFirstPrintableCodePoint(0);
-    gfx_SetColor(FOREGROUND);
+    gfx_SetColor(editor.foreground_color);
 
     if(!program.program_loaded) {
         const u8 COUNT_PER_SCREEN = 22;
@@ -1838,11 +2041,11 @@ void render(void) {
         for(int i = program.view_top_program; y < 230 && i < os_programs_count; ++i) {
             bool selected = (i == program.selected_program);
             if(selected) {
-                fontlib_SetForegroundColor(BACKGROUND);
-                gfx_SetColor(FOREGROUND);
+                fontlib_SetForegroundColor(editor.background_color);
+                gfx_SetColor(editor.foreground_color);
                 gfx_FillRectangle_NoClip(x - 1, y - 1, FONT_WIDTH*8 + 2, FONT_HEIGHT + 2);
             } else {
-                fontlib_SetForegroundColor(FOREGROUND);
+                fontlib_SetForegroundColor(editor.foreground_color);
             }
             char *name = (char*)os_programs[i].name;
             draw_string_max_chars(name, 8, x, y);
@@ -1858,11 +2061,11 @@ void render(void) {
                 size_bar_width = ((size * max_width) / 65535);
             }
             if(archived) { gfx_SetColor(0xD5); }
-            else { gfx_SetColor(FOREGROUND); }
+            else { gfx_SetColor(editor.foreground_color); }
             gfx_FillRectangle_NoClip(x + FONT_WIDTH*8 + 10, y, size_bar_width, FONT_HEIGHT);
 
             if(archived) {
-                fontlib_SetForegroundColor(FOREGROUND);
+                fontlib_SetForegroundColor(editor.foreground_color);
                 draw_string("*", x - (FONT_WIDTH + 2), y + 3);
             }
 
@@ -1883,10 +2086,10 @@ void render(void) {
             bool selected = (i == program.opened_directory_list_index);
             u24 width = (FONT_WIDTH*cast(u24)program.opened_directory->lists[i].name_count);
             if(!selected) {
-                fontlib_SetForegroundColor(FOREGROUND);
+                fontlib_SetForegroundColor(editor.foreground_color);
             } else {
-                fontlib_SetForegroundColor(BACKGROUND);
-                gfx_SetColor(FOREGROUND);
+                fontlib_SetForegroundColor(editor.background_color);
+                gfx_SetColor(editor.foreground_color);
                 gfx_FillRectangle_NoClip(x - 1, 5, width + 2, FONT_HEIGHT + 1);
             }
             draw_string(program.opened_directory->lists[i].name, cast(u24)x, 5);
@@ -1935,10 +2138,10 @@ void render(void) {
             bool selected = (cast(s24)i == program.opened_directory_token_index);
             u24 width = (str_length+2)*FONT_WIDTH;
             if(!selected) {
-                fontlib_SetForegroundColor(FOREGROUND);
+                fontlib_SetForegroundColor(editor.foreground_color);
             } else {
-                fontlib_SetForegroundColor(BACKGROUND);
-                gfx_SetColor(FOREGROUND);
+                fontlib_SetForegroundColor(editor.background_color);
+                gfx_SetColor(editor.foreground_color);
                 gfx_FillRectangle_NoClip(4, y - 1, width + 4, FONT_HEIGHT + 2);
             }
 
@@ -1950,7 +2153,7 @@ void render(void) {
             draw_string_max_chars(str, str_length, 2*FONT_WIDTH+7, y);
             y += FONT_HEIGHT + 2;
         }
-        fontlib_SetForegroundColor(FOREGROUND);
+        fontlib_SetForegroundColor(editor.foreground_color);
     } else {
         s24 cursor_y = program.linebreaks_count - 1;
         for(int i = 0; i <= program.linebreaks_count - 1; ++i) {
@@ -1959,16 +2162,41 @@ void render(void) {
                 break;
             }
         }
-        
+
         int x = 5;
         u8 y = 5;
+        s24 max_width = 320 - (FONT_WIDTH+2);
+        s24 max_height = 240 - FONT_HEIGHT;
+        s24 chars_per_line = max_width/FONT_WIDTH;
+        s24 lines_per_screen = (max_height / (FONT_HEIGHT + 2));
+
         if(cursor_y < program.view_top_line) {
             program.view_top_line = cursor_y;
         }
-        if(cursor_y > program.view_top_line + 21) {
-            program.view_top_line = cursor_y - 21;
+        if(cursor_y >= program.view_top_line + (lines_per_screen - 1)) {
+            program.view_top_line = cursor_y - (lines_per_screen - 1);
         }
-        const u24 CHARS_PER_LINE = 43;
+
+        s24 bottom_line = min(program.linebreaks_count - 1, program.view_top_line + lines_per_screen);
+        if(program.linebreaks_dirty_indentation_min <= bottom_line) {
+            assert(program.linebreaks_dirty_indentation_min != 0, "How did line 0 get dirty?");
+            if(program.linebreaks_dirty_indentation_min != 0) {
+                s24 indentation = program.linebreaks[program.linebreaks_dirty_indentation_min - 1].indentation;
+                for(int i = program.linebreaks_dirty_indentation_min - 1; i <= bottom_line; ++i) {
+                    program.linebreaks[i].indentation = cast(u8)indentation;
+                    s24 first_loc = get_linebreak_location(i)+1;
+                    s24 second_loc = get_linebreak_location(i+1)-1;
+                    u8 byte = program.data[first_loc];
+                    change_indentation_based_on_byte(indentation, byte);
+                    if(second_loc != first_loc) {
+                        byte = program.data[second_loc];
+                        change_indentation_based_on_byte(indentation, byte);
+                    }
+                }
+                program.linebreaks_dirty_indentation_min = cast(u16)bottom_line + 1;
+            }
+        }
+
         s24 cursor_char_in_line = 0;
         {
             s24 last_char_in_line = program.size - 1;
@@ -1990,10 +2218,10 @@ void render(void) {
             }
         }
         cursor_char_in_line += program.linebreaks[cursor_y].indentation;
-        if(cursor_char_in_line <= 42) {
+        if(cursor_char_in_line <= chars_per_line - 2) {
             program.view_first_character = 0;
         } else {
-            program.view_first_character = (cursor_char_in_line - cast(s24)CHARS_PER_LINE/cast(s24)2);
+            program.view_first_character = (cursor_char_in_line - cast(s24)chars_per_line/cast(s24)2);
         }
 
         int first_token = get_linebreak_location(program.view_top_line) + 1;
@@ -2008,11 +2236,16 @@ void render(void) {
             indentation_level -= change;
         }
         x += indentation_level * FONT_WIDTH;
+
+        // NOTE: On a stress test (DJ Omnimaga's pokewalrus data files), frame time is
+        // 13ms with nothing, 115ms with updating, 230ms with updating/rendering.
         for(int i = first_token; i < program.size;) {
             bool on_cursor = (i == program.cursor);
-            bool selected = on_cursor;
+            bool selected;
             if(program.cursor_selecting) {
                 selected = i >= selection.min && i <= selection.max;
+            } else {
+                selected = on_cursor;
             }
             s24 str_length = 0;
             char *str;
@@ -2037,27 +2270,27 @@ void render(void) {
                 chars_until_line += amount_to_move;
             }
 
-            if(selected && str_length == 0 && (byte_0 == LINEBREAK || byte_0 == SPACE)) {
-                u24 length_of_rect;
-                if(byte_0 == LINEBREAK) { length_of_rect = FONT_WIDTH/2; }
-                if(byte_0 == SPACE) { length_of_rect = FONT_WIDTH; }
-                gfx_SetColor(HIGHLIGHT);
-                gfx_FillRectangle_NoClip(cast(u24)x,y,length_of_rect,FONT_HEIGHT);
-                gfx_SetColor(FOREGROUND);
-            }
             if(str_length > 0) {
-                if(selected) { fontlib_SetTransparency(false); fontlib_SetBackgroundColor(HIGHLIGHT); }
+                if(selected) { fontlib_SetTransparency(false); fontlib_SetBackgroundColor(editor.highlight_color); }
                 else { fontlib_SetTransparency(true); }
                 s24 start = x;
                 s24 end = x + cast(s24)str_length*FONT_WIDTH;
-                s24 max_chars = (min(310, end) - start) / FONT_WIDTH;
-                if(end > 310) {
+                s24 max_chars = (min(max_width, end) - start) / FONT_WIDTH;
+                if(end > max_width) {
                     break_line = true;
                 }
                 if(max_chars > 0) {
                     draw_string_max_chars(str,(u24)max_chars, (u24)x,y);
                 }
+            } else if(selected && (byte_0 == LINEBREAK || byte_0 == SPACE)) {
+                u24 length_of_rect;
+                if(byte_0 == LINEBREAK) { length_of_rect = FONT_WIDTH/2; }
+                if(byte_0 == SPACE) { length_of_rect = FONT_WIDTH; }
+                gfx_SetColor(editor.highlight_color);
+                gfx_FillRectangle_NoClip(cast(u24)x,y,length_of_rect,FONT_HEIGHT);
+                gfx_SetColor(editor.foreground_color);
             }
+
             if(on_cursor && !program.cursor_selecting) {
                 u8 length_of_rect = FONT_WIDTH;
                 if(str_length > 0) { length_of_rect = cast(u8)str_length*FONT_WIDTH; }
@@ -2085,13 +2318,14 @@ void render(void) {
                 if(current_view_y <= program.linebreaks_count - 1) {
                     i = get_linebreak_location(current_view_y) + 1;
                     if(current_view_y == program.linebreaks_count - 1) {
+                        // NOTE: Bottom line indicating end of file
                         gfx_FillRectangle(0,y+FONT_HEIGHT+4,64,1);
                     }
                 } else {
                     break;
                 }
             }
-            if(y >= 235)
+            if(y >= max_height)
             {
                 break;
             }
@@ -2116,16 +2350,16 @@ void render(void) {
         if(program.redo_bar_visual_height <= 3 && redo_bar_target_height == 0) { program.redo_bar_visual_height = 0; }
         gfx_FillRectangle_NoClip(320-8,240-cast(u8)program.redo_bar_visual_height,2,cast(u8)program.redo_bar_visual_height);
         
-        log("%2x %2x [%2x] %2x %2x\n", program.data[program.cursor - 2], program.data[program.cursor - 1], program.data[program.cursor], program.data[program.cursor + 1], program.data[program.cursor+2]);
+        // log("%2x %2x [%2x] %2x %2x\n", program.data[program.cursor - 2], program.data[program.cursor - 1], program.data[program.cursor], program.data[program.cursor + 1], program.data[program.cursor+2]);
     }
     
     fontlib_SetTransparency(true);
-    fontlib_SetForegroundColor(FOREGROUND);
+    fontlib_SetForegroundColor(editor.foreground_color);
     char *cursor_glyph = null;
-    if(program.cursor_mode == CursorMode_Second) {
+    if(editor.cursor_mode == CursorMode_Second) {
         cursor_glyph = "\xE1";
-    } else if(program.cursor_mode == CursorMode_Alpha) {
-        if(program.alpha_is_lowercase) {
+    } else if(editor.cursor_mode == CursorMode_Alpha) {
+        if(editor.alpha_is_lowercase) {
             cursor_glyph = "\xE3";
         } else {
             cursor_glyph = "\xE2";
@@ -2137,38 +2371,19 @@ void render(void) {
 
     if(program.entering_goto) {
         fontlib_SetTransparency(true);
-        fontlib_SetForegroundColor(FOREGROUND);
+        fontlib_SetForegroundColor(editor.foreground_color);
         u24 rect_min_x = 160 - 40;
         u24 rect_max_x = 160 + 40;
         u8 rect_min_y = 120 - 20;
         u8 rect_max_y = 120 + 20;
         u24 rect_width = rect_max_x - rect_min_x;
         u8 rect_height = rect_max_y - rect_min_y;
-        gfx_SetColor(BACKGROUND);
+        gfx_SetColor(editor.background_color);
         gfx_FillRectangle_NoClip(rect_min_x-2, rect_min_y-2, rect_width+4, rect_height+4);
-        gfx_SetColor(FOREGROUND);
+        gfx_SetColor(editor.foreground_color);
         gfx_Rectangle_NoClip(rect_min_x, rect_min_y, rect_width, rect_height);
-        static u8 str[8] = "0000000\0";
-        u24 it = program.entering_goto_number;
-        u24 magnitude = 1000000;
-        u24 length = 0;
-        bool at_a_number_yet = false;
-        I_KNOW_ITS_UNUSED(length);
-        for(int i = 0; i <= 7 - 1; ++i) {
-            u8 digit = cast(u8)(it / magnitude);
-            if(digit == 0 && !at_a_number_yet) {
-                str[i] = ' ';
-            } else {
-                str[i] = digit + '0';
-                length += 1;
-            }
-            if(digit != 0) {
-                at_a_number_yet = true;
-            }
-            it -= digit*magnitude;
-            magnitude /= 10;
-        }
-        draw_string((char*)str, rect_min_x + 15, 240/2 - FONT_HEIGHT/2);
+        draw_string_max_chars((char*)program.entering_goto_chars, program.entering_goto_chars_count,
+                              rect_min_x + 15, 240/2 - FONT_HEIGHT/2);
     }
 }
 
