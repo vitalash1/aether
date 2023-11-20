@@ -2236,7 +2236,9 @@ void render(void) {
         x += indentation_level * FONT_WIDTH;
 
         // NOTE: On a stress test (DJ Omnimaga's pokewalrus data files), frame time is
-        // 13ms with nothing, 115ms with updating, 230ms with updating/rendering.
+        // 13ms without this loop,
+        // 115ms with //draw_string commented out in this loop,
+        // 230ms with this entire loop uncommented.
         for(int i = first_token; i < program.size;) {
             bool on_cursor = (i == program.cursor);
             bool selected;
