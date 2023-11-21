@@ -13,6 +13,11 @@
 
     ------Would be nice
 
+    Going to places in editor
+      - "OMEGATR:32":prgm(AETHER
+        being a way to edit OMEGATR at the 32nd token (as per what was ideated in KryptonIDE's thread)
+      - When returning from running a basic program, if it error'd, go to that part of the code.
+        I may need to modify os_RunPrgm's routine to preserve some variables?
     Larger file support (65505 or OS_VAR_MAX_SIZE)
       - Move static data (like the catalog menu data, and list of programs and lists)
         into appvars to free up more room for now...
