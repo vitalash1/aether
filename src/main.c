@@ -1,46 +1,39 @@
-// TODO: LARGE file support (~65505 or OS_VAR_MAX_SIZE)
-// Few possible ways of doing this:
-// - Get a contiguous piece of memory 65505 bytes large.
-//   One candidate for this is reposessing GFX's draw-buffer,
-//   and changing our renderer to accomodate not being double-buffered.
-//   Another candidate is "os_MemChk" but this seems to usually be a value less than 65505 on a healthy calculator.
-//   and presumably autosave must be disabled as it may be using that section of memory.
-//   
-// - Page memory in as we need it, and operate on one section of the file at a time
-//   (ti_OpenVar("a") may let me overwrite specific parts of the file at once...)
-//   
-//   I speculate I would want to try overlapping pages like this
-//   +-------------------+
-//   |  SECTION 1 (0-32k)|  
-//   |+------------------+-+
-//   ++------------------+ |
-//    | SECTION 2 (16-48K) |
-//   ++------------------+ |
-//   |+------------------+-+
-//   | SECTION 3 (32-64k)|
-//   +-------------------+
-//   Because then we can ensure operating on one at a time.
-//   So there need not be a situation where we need to operate on two
-//   sections at once on a boundary.
-//   But I need to actually experiment with this to see what's actually good.
+/*
 
-// TODO: Some performance concerns
-// - Rendering a whole screen full of glyphs takes a very long time (~200ms).
-//   May be good to have a partial-renderer, or see if a bespoke font renderer
-//   with few requirements will be faster.
+    TODOs
 
-// TODO: "adriweb: it's a nice ide feature to be able to list labels and instant-jump to them"
+    ------Necessary for release
 
-// TODO: Maybe it'd be cool if you could goto string. Like
-// if you put a comment on a line starting with `"` you could 
-// go to those commented lines quickly
-// TODO: User-space favorite tokens from catalog
-// TODO: hotkey ideas
-// - Delete from cursor to end of line
-// - Delete from cursor to start of line
-// - Goto next/previous occurance of letter in line (like VI's f/t/F/T)
-// - Go to top/bottom of screen without scrolling (2nd -> up/down)
-//   (probably a bad idea to use 2nd for this because sometimes it's nice to be in a different mode and not worry about differing behavior)
+    Performance
+      - Rendering a whole screen full of glyphs takes a very long time (~200ms).
+        May be good to have a partial-renderer, or see if a bespoke font renderer
+        with few requirements will be faster.
+      - Being at the end of a very long line (See POKEWALRUS data files)
+        is just super laggy and that's dumb because the program shouldn't be laggy.
+
+    ------Would be nice
+
+    Larger file support (65505 or OS_VAR_MAX_SIZE)
+      - Move static data (like the catalog menu data, and list of programs and lists)
+        into appvars to free up more room for now...
+        (A few kilobytes saved, and no longer statically limiting the number of programs/lists)
+      - Get a contiguous piece of memory 65505 bytes large.
+         - One candidate for this is reposessing GFX's draw-buffer,
+           and changing our renderer to accomodate not being double-buffered.
+           The plus is that this would kill two birds with one stone.
+           We can make the renderer better, and have enough memory for 65505 files
+      - Page memory in as we need it, and operate on one section of the file at a time
+
+    -----Various ideas
+      - adriweb: it's a nice ide feature to be able to list labels and instant-jump to them
+      - Maybe it'd be cool if you could goto any string.
+      - User-space favorite tokens from catalog
+      - Hotkey ideas
+        - Delete from cursor to end of line
+        - Delete from cursor to start of line
+        - Goto next/previous occurance of letter in line (like VI's f/t/F/T)
+*/
+
 
 #include <fileioc.h>
 #include <ti/screen.h>
@@ -90,14 +83,8 @@ s24 calculate_cursor_y(void);
 // http://tibasicdev.wikidot.com/miscellaneous-tokens
 // ^ tibasicdev has more accurate token tables, but worse formatting.
 //   it also has an inaccuracy on "CLASSIC" token?
-
-// get token string
-// https://ce-programming.github.io/toolchain/libraries/fileioc.html?highlight=gettoken#_CPPv417ti_GetTokenStringPPvP7uint8_tPj
 // http://tibasicdev.wikidot.com/83lgfont
 // https://github.com/RoccoLoxPrograms/OSFonts/blob/main/LargeFontCodes.png
-
-// https://ce-programming.github.io/toolchain/libraries/fontlibc.html#creating-fonts
-// http://hukka.ncn.fi/?fony
 
 static const u8 editor_font_data[] = {
     #include "aether_editor_fnt.h"
@@ -681,7 +668,25 @@ void update_editor_theme_based_on_settings() {
     }
 }
 
+bool gfx_begun = false;
+
+void initialize_graphics() {
+    // TODO: At the moment, I'm lazy to check whether gfx_Begin is okay with
+    // being called multiple times so we do this for now...
+    if(!gfx_begun) {
+        gfx_begun = true;
+        gfx_Begin();
+        gfx_SetDrawBuffer();
+        gfx_FillScreen(0xFF);
+        gfx_SwapDraw();
+    }
+}
+
 int main() {
+    initialize_graphics();
+    kb_DisableOnLatch();
+    ti_SetGCBehavior(gc_before, gc_after);
+    fontlib_SetFont(editor_font, 0);
 
     {
         u8 editor_settings_handle = ti_Open(SETTINGS_DATA_APPVAR_NAME, "r");
@@ -698,14 +703,7 @@ int main() {
     }
     update_editor_theme_based_on_settings();
 
-    editor.running = true;
-    kb_DisableOnLatch();
-    gfx_Begin();
-    gfx_SetDrawBuffer();
-    ti_SetGCBehavior(gc_before, gc_after);
-    fontlib_SetFont(editor_font, 0);
-
-    {    
+    {
         // NOTE: Scan OS for programs
         void *it = null;
         while(true) {
@@ -814,13 +812,10 @@ int main() {
     u24 last_frame = cast(u24)clock();
 #endif
 
-    // NOTE: Autosave causes a 50ms spike for an archived 5000 byte program.
-    // I can't notice any spike at all for a non-archived 5000 byte program.
-    #define AUTOSAVE_INTERVAL_MILLISECONDS (100)
+    #define AUTOSAVE_INTERVAL_MILLISECONDS (10000)
     #define AUTOSAVE_INTERVAL_CLOCK_CYCLES ((AUTOSAVE_INTERVAL_MILLISECONDS*CLOCKS_PER_SEC)/1000)
     s24 clock_cycles_until_autosave = AUTOSAVE_INTERVAL_CLOCK_CYCLES;
 
-    editor.run_program_at_end = false;
     editor.running = true;
     if(os_programs_count == 0) {
         exit_with_message("No TI-Basic programs found.");
@@ -927,11 +922,14 @@ int run_prgm_callback(void *data_, int retval) {
 
     log("Program exited with code %d\n", retval);
 
+    initialize_graphics();
+
     RunPrgmCallbackReconstructProgram *data = cast(RunPrgmCallbackReconstructProgram*)data_;
     load_program(cast(char*)data->program_name);
     program.cursor = data->cursor;
     program.view_top_line = data->view_top_line;
-    return main();
+    int result = main();
+    return result;
 }
 
 // Takes a linebreak Y, returns offset into program.data
@@ -1233,7 +1231,6 @@ inline bool get_is_list_name_override() {
 
 // NOTE: This ZEROES the global "static LoadedProgram program = {}" state!
 void load_program(char *name) {
-    blit_loading_indicator();
     zero(&program, sizeof(LoadedProgram));
     program.linebreaks[0].location_ = 0;
     program.linebreaks_count = 1;
@@ -1296,7 +1293,11 @@ void load_program(char *name) {
     if(fully_loaded_program) {
         program.program_loaded = true;
         program.linebreaks_dirty_indentation_min = 1;
+        // NOTE: Save right now so we can see if the program is too big
+        // and we're unable to save, so we can trigger a "Not enough ram to save" error immediately
+        save_program(false);
     }
+
 }
 
 void save_program(bool are_we_exiting_so_we_should_do_a_final_archiving_of_the_variable) {
@@ -1547,11 +1548,13 @@ void update(void) {
         if(key_down[6] & kb_Enter && program.selected_program >= 0 && program.selected_program <= os_programs_count - 1) {
             assert(os_programs_count != 0, "Shouldn't be able to reach this logically");
             char *stored_name = (char*)os_programs[program.selected_program].name;
+            blit_loading_indicator();
             load_program(stored_name);
         } else if(key_down[1] & kb_Mode) {
             u8 exists = ti_OpenVar((char*)editor.settings.last_editing_program, "r", OS_TYPE_PRGM);
             if(exists != 0) {
                 ti_Close(exists);
+                blit_loading_indicator();
                 load_program((char*)editor.settings.last_editing_program);
                 u16 cursor_y = editor.settings.last_cursor_y;
                 if(cursor_y >= program.linebreaks_count) {
@@ -1737,7 +1740,7 @@ void update(void) {
             if(key_down[4] & kb_DecPnt){ insert_token_u8(program.cursor, 0x3A); program.cursor += 1; }
             if(key_down[5] & kb_Chs)   { insert_token_u8(program.cursor, 0xB0); program.cursor += 1; }
 
-#if 0
+#if 1
             if(key_down[3] & kb_Apps) {
                 // TODO: I disabled this because of this bug
                 // https://github.com/CE-Programming/toolchain/issues/459
